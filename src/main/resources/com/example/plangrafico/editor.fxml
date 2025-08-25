@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+
+<BorderPane xmlns="http://javafx.com/javafx/21" xmlns:fx="http://javafx.com/fxml/1"
+            fx:controller="com.example.plangrafico.EditorController"
+            stylesheets="app.css">
+
+    <top>
+        <ToolBar>
+            <Button fx:id="btnNuevoPlan" text="Nuevo plan"/>
+            <Separator/>
+            <Label text="Inicio:"/>
+            <DatePicker fx:id="dpInicio"/>
+            <Label text="Fin:"/>
+            <DatePicker fx:id="dpFin"/>
+            <Label text="Periodización:"/>
+            <ChoiceBox fx:id="cbTipo"/>
+            <Button fx:id="btnAutoAtr" text="Auto ATR"/>
+            <Pane HBox.hgrow="ALWAYS"/>
+            <Button fx:id="btnExportar" text="Exportar PNG"/>
+        </ToolBar>
+    </top>
+
+    <center>
+        <!-- el grid se inyecta desde el controller -->
+        <ScrollPane fx:id="scroll" fitToWidth="true" fitToHeight="true"/>
+    </center>
+
+    <right>
+        <VBox spacing="8" padding="10">
+            <Label text="Propiedades" styleClass="title"/>
+            <Label text="(En esta versión: propiedades del plan)"/>
+            <TextArea fx:id="taNotas" promptText="Notas del plan" prefRowCount="8"/>
+            <Button fx:id="btnGuardarNotas" text="Guardar notas" />
+            <Separator/>
+            <Label text="Leyenda"/>
+            <ListView fx:id="lvLeyenda" prefWidth="220" prefHeight="200"/>
+        </VBox>
+    </right>
+</BorderPane>

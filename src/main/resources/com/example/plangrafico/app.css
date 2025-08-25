@@ -1,0 +1,50 @@
+.title { -fx-font-weight: bold; -fx-font-size: 14px; }
+.cal-cell {
+    -fx-background-color: -fx-control-inner-background;
+    -fx-border-color: -fx-text-box-border;
+    -fx-border-width: 0.5;
+    -fx-min-width: 36; -fx-min-height: 28;
+}
+.cal-cell:hover { -fx-background-color: derive(-fx-control-inner-background, -5%); }
+.cal-selected {
+    -fx-background-color: rgba(30,144,255,0.35);
+    -fx-border-color: dodgerblue; -fx-border-width: 1.2;
+}
+.cal-fixed {
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.35), 10, 0.1, 0, 0);
+    -fx-background-insets: 0,1;
+}
+/* Microciclos */
+.micro-ordinario        { -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.08), 4, 0.2, 0, 0); }
+.micro-choque           { -fx-border-color: #e53935; -fx-border-width: 0 0 2 0; }
+.micro-aproximacion     { -fx-border-color: #f9a825; -fx-border-width: 0 0 2 0; }
+.micro-competicion      { -fx-border-color: #2e7d32; -fx-border-width: 0 0 2 0; }
+.micro-restablecimiento { -fx-border-color: #6a1b9a; -fx-border-width: 0 0 2 0; }
+
+/* Bordes de inicio/fin de micro/meso (arriba/abajo/izq/der, ajusta según tu layout) */
+.borde-inicio-micro { -fx-border-color: #424242; -fx-border-width: 2 0 0 0; }
+.borde-fin-micro    { -fx-border-color: #424242; -fx-border-width: 0 0 2 0; }
+.borde-inicio-meso  { -fx-border-color: #0D47A1; -fx-border-width: 3 0 0 0; }
+.borde-fin-meso     { -fx-border-color: #0D47A1; -fx-border-width: 0 0 3 0; }
+
+/* Badge de evento (puedes añadir un pequeño círculo con un StackPane secundario) */
+.tiene-evento { -fx-background-insets: 0, 0 0 0 0, 0; }
+.plan-grafico .pg-header {
+    -fx-background-color: #F6F8FA;
+    -fx-text-fill: #111827;
+}
+
+.plan-grafico .pg-cell {
+    -fx-background-color: white;
+    -fx-alignment: center;
+}
+
+.plan-grafico .pg-merged {
+    -fx-font-weight: bold;
+    -fx-background-color: #EFFFFB; /* puedes cambiar por fila: MES, PERÍODO, etc. */
+}
+
+/* Ejemplos por fila (si quieres color por tipo de fila) */
+.plan-grafico .row-mes     { -fx-background-color: #E3F2FD; }
+.plan-grafico .row-periodo { -fx-background-color: #FFF8E1; }
+.plan-grafico .row-etapa   { -fx-background-color: #E8F5E9; }

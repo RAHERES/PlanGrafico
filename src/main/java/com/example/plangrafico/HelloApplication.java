@@ -2,6 +2,7 @@ package com.example.plangrafico;
 
 import javafx.application.Application;
 import javafx.fxml.FXMLLoader;
+import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.stage.Stage;
 
@@ -10,9 +11,16 @@ import java.io.IOException;
 public class HelloApplication extends Application {
     @Override
     public void start(Stage stage) throws IOException {
+/*
         FXMLLoader fxmlLoader = new FXMLLoader(HelloApplication.class.getResource("hello-view.fxml"));
         Scene scene = new Scene(fxmlLoader.load(), 320, 240);
         stage.setTitle("Hello!");
+        stage.setScene(scene);
+        stage.show();
+*/
+        Parent root = FXMLLoader.load(HelloApplication.class.getResource("Editor-temp.fxml"));
+        Scene scene = new Scene(root, 1100, 700);
+        stage.setTitle("Plan Gráfico - Editor");
         stage.setScene(scene);
         stage.show();
     }

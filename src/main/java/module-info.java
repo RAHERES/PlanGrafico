@@ -10,6 +10,13 @@ module com.example.plangrafico {
     requires org.kordamp.bootstrapfx.core;
     requires eu.hansolo.tilesfx;
     requires com.almasb.fxgl.all;
+    requires java.sql;
+    requires java.desktop;
+    requires javafx.swing;
+
+    // nombre del módulo automático del jar de sqlite-jdbc:
+    requires org.xerial.sqlitejdbc;
+    requires com.calendarfx.view;
 
     opens com.example.plangrafico to javafx.fxml;
     exports com.example.plangrafico;
