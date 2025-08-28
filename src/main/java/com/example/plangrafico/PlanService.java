@@ -83,8 +83,8 @@ public class PlanService {
                 plan.serieCargaDiaria().stream().limit(5).collect(Collectors.toList()));
         System.out.println("Minutos por contenido: " + plan.resumenMinutosPorContenido());
 
-        CalendarViewController calendarViewController = new CalendarViewController();
-        calendarViewController.setPlan(plan); // esto construirá el adapter y repintará
+        /*CalendarViewController calendarViewController = new CalendarViewController();
+        calendarViewController.setPlan(plan); // esto construirá el adapter y repintará*/
 
         CalendarioAnualDialog anualDialog = new CalendarioAnualDialog();
             anualDialog.mostrar(new Stage(), new Label("Stub label calendario anual"));
