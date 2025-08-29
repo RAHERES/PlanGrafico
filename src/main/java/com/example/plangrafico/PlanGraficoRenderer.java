@@ -18,10 +18,19 @@ public final class PlanGraficoRenderer {
     public record WeekCell(int weekIdx,
                            LocalDate start,
                            LocalDate end,
-                           String mes, String periodo, String etapa,
-                           String mesociclo, String micro,
-                           String vol, String intn,
-                           String controles, String comp, String ses, String min) {}
+                           String mes,
+                           String periodo,
+                           String etapa,
+                           String mesociclo,
+                           String micro,
+                           String vol,
+                           String intn,
+                           String controles,
+                           String comp,
+                           String ses,
+                           String min) {
+
+    }
 
     private static final DateTimeFormatter DF = DateTimeFormatter.ofPattern("dd");
 
@@ -70,7 +79,7 @@ public final class PlanGraficoRenderer {
         grid.setPadding(new Insets(8));
 
         // Ancho uniforme por semana
-        final double weekWidth = 120; // ajusta a tu gusto/viewport
+        final double weekWidth = 60; // ajusta a tu gusto/viewport
         for (int c = 0; c < weeks.size() + 1; c++) { // +1 por la columna de títulos
             ColumnConstraints cc = new ColumnConstraints(weekWidth);
             cc.setPrefWidth(weekWidth);

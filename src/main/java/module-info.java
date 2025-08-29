@@ -17,7 +17,11 @@ module com.example.plangrafico {
     // nombre del módulo automático del jar de sqlite-jdbc:
     requires org.xerial.sqlitejdbc;
     requires com.calendarfx.view;
+    // 👇 necesario para PropertyValueFactory (reflexión)
+    opens com.example.plangrafico.ui to javafx.base;
 
     opens com.example.plangrafico to javafx.fxml;
     exports com.example.plangrafico;
+    exports com.example.plangrafico.ui;
+
 }

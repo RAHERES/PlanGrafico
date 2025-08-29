@@ -137,7 +137,7 @@ public class EditorController {
         grid = new CalendarioGrid(ini, fin);
         Region content = grid;
         content.setStyle("-fx-padding: 10;");
-       // scroll.setContent(content);
+        scroll.setContent(content);
 
         // ... tu creación de CalendarGrid
         this.vistaCalendario = grid; // donde grid es tu CalendarGrid

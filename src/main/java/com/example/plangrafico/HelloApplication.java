@@ -18,11 +18,13 @@ public class HelloApplication extends Application {
         stage.setScene(scene);
         stage.show();
 */
-        Parent root = FXMLLoader.load(HelloApplication.class.getResource("Editor-temp.fxml"));
+ /*       Parent root = FXMLLoader.load(HelloApplication.class.getResource("Editor-temp.fxml"));
         Scene scene = new Scene(root, 1100, 700);
         stage.setTitle("Plan Gráfico - Editor");
         stage.setScene(scene);
-        stage.show();
+        stage.show();*/
+
+
     }
 
     public static void main(String[] args) {
