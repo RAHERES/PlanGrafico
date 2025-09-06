@@ -11,18 +11,19 @@ import java.io.IOException;
 public class    HelloApplication extends Application {
     @Override
     public void start(Stage stage) throws IOException {
-/*
-        FXMLLoader fxmlLoader = new FXMLLoader(HelloApplication.class.getResource("hello-view.fxml"));
+
+  /*      FXMLLoader fxmlLoader = new FXMLLoader(HelloApplication.class.getResource("hello-view.fxml"));
         Scene scene = new Scene(fxmlLoader.load(), 320, 240);
         stage.setTitle("Hello!");
         stage.setScene(scene);
         stage.show();
 */
+        Stage stage2 = new Stage();
         Parent root = FXMLLoader.load(HelloApplication.class.getResource("Editor-temp.fxml"));
-        Scene scene = new Scene(root, 1100, 700);
-        stage.setTitle("Plan Gráfico - Editor");
-        stage.setScene(scene);
-        stage.show();
+        Scene scene2 = new Scene(root, 1100, 700);
+        stage2.setTitle("Plan Gráfico - Editor");
+        stage2.setScene(scene2);
+        stage2.show();
     }
 
     public static void main(String[] args) {

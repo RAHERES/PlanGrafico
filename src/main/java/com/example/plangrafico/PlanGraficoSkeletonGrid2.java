@@ -531,6 +531,7 @@ public class PlanGraficoSkeletonGrid2 extends BorderPane {
         }
 */
 import javafx.application.Application;
+import javafx.beans.binding.Bindings;
 import javafx.beans.property.*;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
@@ -552,8 +553,10 @@ import java.io.File;
 import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.time.format.TextStyle;
+import java.time.temporal.ChronoUnit;
 import java.time.temporal.TemporalAdjusters;
 import java.util.*;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 
 /**
@@ -562,6 +565,220 @@ import java.util.stream.Collectors;
  * Admite crear spans por **semanas o % del plan**, meses combinados, eventos y cargas.
  */
 public class PlanGraficoSkeletonGrid2 extends BorderPane {
+
+    public enum TipoPeriodo {
+        PREPARATORIO, COMPETITIVO, TRANSICION
+    }
+
+    public static final class Span {
+        public final int startCol; // 1-based si col 0 es títulos
+        public final int endCol;   // inclusive
+        public final String label;
+        public final javafx.scene.paint.Color color;
+
+        public Span(int startCol, int endCol, String label, javafx.scene.paint.Color color) {
+            this.startCol = startCol;
+            this.endCol = endCol;
+            this.label = label;
+            this.color = color;
+        }
+
+        public int length() { return endCol - startCol + 1; }
+    }
+
+    public static void agregarSpan(GridPane grid, int fila, Span s) {
+        StackPane pane = new StackPane();
+        pane.setPadding(new Insets(4, 6, 4, 6));
+        pane.setBackground(new Background(new BackgroundFill(s.color.deriveColor(0,1,1,0.25),
+                new CornerRadii(8), Insets.EMPTY)));
+        pane.setBorder(new Border(new BorderStroke(s.color, BorderStrokeStyle.SOLID,
+                new CornerRadii(8), new BorderWidths(2))));
+
+        Label lbl = new Label(s.label);
+        lbl.setStyle("-fx-font-weight: 700; -fx-text-fill: -fx-text-base-color;"); // adapta al tema
+        pane.getChildren().add(lbl);
+
+        GridPane.setRowIndex(pane, fila);
+        GridPane.setColumnIndex(pane, s.startCol);
+        GridPane.setColumnSpan(pane, s.length()); // ¡colspan real!
+        grid.getChildren().add(pane);
+    }
+
+    private HBox barraPorcentajes(Consumer<LinkedHashMap<TipoPeriodo, Double>> onAplicar) {
+        TextField tfPrep = new TextField("60");
+        TextField tfComp = new TextField("30");
+        TextField tfTran = new TextField("10");
+        tfPrep.setPrefColumnCount(3);
+        tfComp.setPrefColumnCount(3);
+        tfTran.setPrefColumnCount(3);
+
+        Label sumLbl = new Label();
+        sumLbl.setMinWidth(90);
+
+        Runnable actualizarSuma = () -> {
+            double sp = parsePct(tfPrep.getText());
+            double sc = parsePct(tfComp.getText());
+            double st = parsePct(tfTran.getText());
+            double sum = sp + sc + st;
+            sumLbl.setText(String.format("Suma: %.1f%%", sum));
+            sumLbl.setStyle(sum > 0 ? "-fx-text-fill: -fx-text-base-color;" : "-fx-text-fill: #e74c3c;");
+        };
+
+        tfPrep.textProperty().addListener((obs, __, ___) -> actualizarSuma.run());
+        tfComp.textProperty().addListener((obs, __, ___) -> actualizarSuma.run());
+        tfTran.textProperty().addListener((obs, __, ___) -> actualizarSuma.run());
+        actualizarSuma.run();
+
+        Button aplicar = new Button("Aplicar");
+        aplicar.disableProperty().bind(
+                Bindings.createBooleanBinding(() ->
+                                (parsePct(tfPrep.getText()) + parsePct(tfComp.getText()) + parsePct(tfTran.getText())) <= 0,
+                        tfPrep.textProperty(), tfComp.textProperty(), tfTran.textProperty())
+        );
+        aplicar.setOnAction(e -> {
+            LinkedHashMap<TipoPeriodo, Double> pct = new LinkedHashMap<>();
+            pct.put(TipoPeriodo.PREPARATORIO, parsePct(tfPrep.getText()));
+            pct.put(TipoPeriodo.COMPETITIVO, parsePct(tfComp.getText()));
+            pct.put(TipoPeriodo.TRANSICION,  parsePct(tfTran.getText()));
+            onAplicar.accept(pct);
+        });
+
+        HBox box = new HBox(8,
+                new Label("Prep %:"), tfPrep,
+                new Label("Comp %:"), tfComp,
+                new Label("Trans %:"), tfTran,
+                sumLbl, aplicar
+        );
+        box.getStyleClass().add("barra-porcentajes");
+        return box;
+    }
+
+    private static double parsePct(String s) {
+        try { return Math.max(0, Double.parseDouble(s.trim())); }
+        catch (Exception ex) { return 0; }
+    }
+
+    public static int semanasEntre(LocalDate inicio, LocalDate finInclusive) {
+        // Ajusta según tu definición; aquí contamos semanas calendario “de a 7 días” y sumamos 1 para incluir el tramo inicial
+        long dias = ChronoUnit.DAYS.between(inicio, finInclusive) + 1;
+        return (int)Math.max(1, Math.ceil(dias / 7.0));
+    }
+
+    public static List<Span> spansDePeriodos(LinkedHashMap<TipoPeriodo, Integer> semanasPorPeriodo,
+                                             int startCol /* primera columna de semanas en tu grid, p. ej. 1 */) {
+        List<Span> spans = new ArrayList<>();
+        int cursor = startCol;
+        for (var e : semanasPorPeriodo.entrySet()) {
+            TipoPeriodo t = e.getKey();
+            int w = Math.max(0, e.getValue());
+            if (w == 0) continue;
+            String label = switch (t) {
+                case PREPARATORIO -> "Preparación";
+                case COMPETITIVO -> "Competencia";
+                case TRANSICION   -> "Transición";
+            };
+            javafx.scene.paint.Color color = switch (t) {
+                case PREPARATORIO -> javafx.scene.paint.Color.web("#2E86DE");
+                case COMPETITIVO -> javafx.scene.paint.Color.web("#27AE60");
+                case TRANSICION  -> javafx.scene.paint.Color.web("#F39C12");
+            };
+            spans.add(new Span(cursor, cursor + w - 1, label, color));
+            cursor += w;
+        }
+        return spans;
+    }
+
+    /**
+     * Devuelve semanas asignadas por periodo usando método de los mayores restos (Hamilton),
+     * con normalización si los % no suman 100 y garantizando ≥1 semana si el % > 0 (si es viable).
+     */
+    public static LinkedHashMap<TipoPeriodo, Integer> asignarSemanasPorPorcentaje(
+            int totalSemanas,
+            LinkedHashMap<TipoPeriodo, Double> porcentajes // usar LinkedHashMap para preservar el orden visual
+    ) {
+        if (totalSemanas <= 0) throw new IllegalArgumentException("totalSemanas debe ser > 0");
+        double suma = porcentajes.values().stream().mapToDouble(Double::doubleValue).sum();
+        if (suma <= 0) throw new IllegalArgumentException("La suma de porcentajes debe ser > 0");
+
+        // Normaliza a 1.0 (100%)
+        Map<TipoPeriodo, Double> norm = porcentajes.entrySet().stream()
+                .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue() / suma));
+
+        // Cálculo exacto, piso y restos
+        class Parcial { TipoPeriodo t; double exacto; int piso; double resto; }
+        List<Parcial> lista = new ArrayList<>();
+        for (var e : norm.entrySet()) {
+            Parcial p = new Parcial();
+            p.t = e.getKey();
+            p.exacto = e.getValue() * totalSemanas;
+            p.piso = (int)Math.floor(p.exacto);
+            p.resto = p.exacto - p.piso;
+            lista.add(p);
+        }
+
+        // Asegura mínimo 1 semana para quien tenga % > 0 (si es posible)
+        int usados = lista.stream().mapToInt(p -> p.piso).sum();
+        int disponibles = totalSemanas - usados;
+        for (Parcial p : lista) {
+            boolean tienePorcentaje = norm.get(p.t) > 0.0;
+            if (tienePorcentaje && p.piso == 0 && disponibles > 0) {
+                p.piso = 1;
+                disponibles--;
+            }
+        }
+
+        // Si aún queda por asignar, reparte por mayores restos
+        usados = lista.stream().mapToInt(p -> p.piso).sum();
+        int faltan = totalSemanas - usados;
+        if (faltan > 0) {
+            // ordenar por resto desc y desempatar por orden natural del mapa original
+            lista.sort((a, b) -> {
+                int cmp = Double.compare(b.resto, a.resto);
+                if (cmp != 0) return cmp;
+                // desempate estable: respeta el orden del LinkedHashMap original
+                List<TipoPeriodo> orden = new ArrayList<>(porcentajes.keySet());
+                return Integer.compare(orden.indexOf(a.t), orden.indexOf(b.t));
+            });
+            for (int i = 0; i < faltan; i++) {
+                lista.get(i % lista.size()).piso++;
+            }
+        } else if (faltan < 0) {
+            // Sobran semanas (sucedió por mínimos). Quita por restos más bajos primero
+            int quitar = -faltan;
+            lista.sort((a, b) -> {
+                int cmp = Double.compare(a.resto, b.resto); // ascendente
+                if (cmp != 0) return cmp;
+                List<TipoPeriodo> orden = new ArrayList<>(porcentajes.keySet());
+                return Integer.compare(orden.indexOf(a.t), orden.indexOf(b.t));
+            });
+            for (Parcial p : lista) {
+                if (quitar == 0) break;
+                int reducible = Math.max(0, p.piso - 1); // no bajes de 1 si tenía porcentaje
+                int take = Math.min(reducible, quitar);
+                p.piso -= take;
+                quitar -= take;
+                if (quitar == 0) break;
+            }
+            if (quitar > 0) {
+                // Como último recurso (p. ej. alguien tenía 0%), quita donde se pueda >0
+                for (Parcial p : lista) {
+                    if (quitar == 0) break;
+                    if (p.piso > 0) {
+                        p.piso--; quitar--;
+                    }
+                }
+            }
+        }
+
+        // Resultado preservando orden de entrada
+        LinkedHashMap<TipoPeriodo, Integer> res = new LinkedHashMap<>();
+        for (TipoPeriodo t : porcentajes.keySet()) {
+            int semanas = lista.stream().filter(p -> p.t == t).findFirst().orElseThrow().piso;
+            res.put(t, semanas);
+        }
+        return res;
+    }
+
 
     // ======= Modelo base =======
     public static class Semana { public final int index; public final LocalDate lunes; Semana(int i, LocalDate l){ index=i; lunes=l; } }
@@ -684,6 +901,8 @@ public class PlanGraficoSkeletonGrid2 extends BorderPane {
         render();
     }
 
+
+
     private void buildTop(){
         // sección de fechas
         HBox fechas = new HBox(8, new Label("Inicio:"), dpInicio, new Label("Fin:"), dpFin, new Label("Competencia:"), dpCompetencia);
@@ -703,11 +922,54 @@ public class PlanGraficoSkeletonGrid2 extends BorderPane {
         dias.setAlignment(Pos.CENTER_LEFT);
 
         // acciones
-        HBox acciones = new HBox(8, btnAddPeriodo, btnAddEtapa, btnAddMeso, btnAddMicro, new Separator(Orientation.VERTICAL), btnGenSes, btnAddEvento, new Separator(Orientation.VERTICAL), btnExport);
+       /* HBox acciones = new HBox(8, btnAddPeriodo, btnAddEtapa, btnAddMeso, btnAddMicro, new Separator(Orientation.VERTICAL), btnGenSes, btnAddEvento, new Separator(Orientation.VERTICAL), btnExport);
+        acciones.setAlignment(Pos.CENTER_LEFT);
+*/
+        // acciones
+        HBox acciones = new HBox(8, btnAddPeriodo, btnAddEtapa, btnAddMeso, btnAddMicro,
+                new Separator(Orientation.VERTICAL), btnGenSes, btnAddEvento,
+                new Separator(Orientation.VERTICAL), btnExport);
         acciones.setAlignment(Pos.CENTER_LEFT);
 
-        VBox top = new VBox(6, fechas, dias, acciones); top.setPadding(new Insets(8));
+// ⬇️ INSERTA ESTO AQUÍ
+        HBox barra = barraPorcentajes(pct -> {
+            int totalSemanas = plan.totalSemanas();
+            LinkedHashMap<TipoPeriodo, Integer> semanasPorPeriodo =
+                    asignarSemanasPorPorcentaje(totalSemanas, pct);
+
+            // sustituye los periodos actuales por los calculados por %
+            plan.periodos.clear();
+            int cursor = 1;
+            for (var e : semanasPorPeriodo.entrySet()) {
+                TipoPeriodo t = e.getKey();
+                int w = e.getValue();
+                if (w <= 0) continue;
+                String nombre = switch (t) {
+                    case PREPARATORIO -> "Preparación";
+                    case COMPETITIVO -> "Competencia";
+                    case TRANSICION  -> "Transición";
+                };
+                Color color = switch (t) {
+                    case PREPARATORIO -> Color.web("#2E86DE");
+                    case COMPETITIVO -> Color.web("#27AE60");
+                    case TRANSICION  -> Color.web("#F39C12");
+                };
+                plan.periodos.add(new PeriodoSeg(nombre, cursor, w, color));
+                cursor += w;
+            }
+            render();
+        });
+// ⬆️ HASTA AQUÍ
+
+// cambia esta línea…
+   //     VBox top = new VBox(6, fechas, dias, acciones);
+// …por esta, para que se vea la barra de porcentajes:
+        VBox top = new VBox(6, fechas, dias, barra, acciones);
+        top.setPadding(new Insets(8));
         setTop(top);
+
+     //   VBox top = new VBox(6, fechas, dias, acciones); top.setPadding(new Insets(8));
+        //setTop(top);
     }
 
     private void buildGridSkeleton(){
@@ -830,7 +1092,13 @@ public class PlanGraficoSkeletonGrid2 extends BorderPane {
             grid.add(cell, c, row);
         }
     }
-
+    // Utilidad para limpiar una fila sin tocar otras:
+    public static void removerNodosDeFila(GridPane grid, int fila) {
+        List<javafx.scene.Node> aEliminar = grid.getChildren().stream()
+                .filter(n -> GridPane.getRowIndex(n) != null && GridPane.getRowIndex(n) == fila)
+                .collect(Collectors.toList());
+        grid.getChildren().removeAll(aEliminar);
+    }
     // ======= Diálogos =======
     private void dialogSegmento(String title, RowType type){
         Dialog<ButtonType> d = new Dialog<>(); d.setTitle(title);
@@ -994,6 +1262,16 @@ public class PlanGraficoSkeletonGrid2 extends BorderPane {
     }
 
     // ======= DEMO =======
-    public static class Demo extends Application { @Override public void start(Stage stage){ var ui=new PlanGraficoSkeletonGrid(); Scene sc=new Scene(ui, 1280, 740); stage.setTitle("Plan Gráfico – Esqueleto (GridPane)"); stage.setScene(sc); stage.show(); } }
+    public static class Demo extends Application {
+        @Override
+        public void start(Stage stage){
+        var ui=new PlanGraficoSkeletonGrid();
+        Scene sc=new Scene(ui, 1280, 740);
+        stage.setTitle("Plan Gráfico – Esqueleto (GridPane)");
+        stage.setScene(sc); stage.show();
+    }
+
+    }
+
     public static void main(String[] args){ Application.launch(Demo.class, args); }
 }

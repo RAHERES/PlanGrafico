@@ -17,6 +17,7 @@ module com.example.plangrafico {
     // nombre del módulo automático del jar de sqlite-jdbc:
     requires org.xerial.sqlitejdbc;
     requires com.calendarfx.view;
+    requires com.google.gson;
 
     opens com.example.plangrafico to javafx.fxml;
     exports com.example.plangrafico;

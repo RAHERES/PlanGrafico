@@ -873,6 +873,8 @@ public class CalendarioAnualDialog {
 
     // Días de entrenamiento elegidos
     private final Set<DayOfWeek> diasEntrenamientoSeleccionados = new HashSet<>();
+    // Al inicio de la clase
+    private Map<DayOfWeek, LocalTime[]> horariosEntrenamiento = new HashMap<>();
 
     // Horarios asociados a cada día de la semana
     private final Map<DayOfWeek, String> horariosPorDia = new HashMap<>();
@@ -938,6 +940,91 @@ public class CalendarioAnualDialog {
         if (diasExcluidos.contains(d)) return false; // fuerza OFF
         return seleccionCalculada(d);                // rango ± filtro
     }*/
+
+    // ==== PÉGALO EN LA CLASE CalendarioAnualDialog ====
+
+    /** Preselecciona un rango (opcional). Acepta inicio y fin en cualquier orden. */
+    public void setRangoInicial(java.time.LocalDate inicio, java.time.LocalDate fin) {
+        if (inicio == null && fin == null) return;
+        if (inicio != null && fin != null && fin.isBefore(inicio)) {
+            // si vienen invertidas, las acomodamos
+            this.fechaInicio = fin;
+            this.fechaFin = inicio;
+        } else {
+            this.fechaInicio = inicio;
+            this.fechaFin = fin;
+        }
+    }
+
+    // ==== PEGAR EN CalendarioAnualDialog ====
+
+    // Lista de días seleccionados (ejemplo: [MONDAY, TUESDAY, THURSDAY])
+    public java.util.List<java.time.DayOfWeek> getDiasSeleccionados() {
+        return new java.util.ArrayList<>(this.diasEntrenamientoSeleccionados);
+        // <-- usa tu estructura real, aquí supongo que tienes un Set<DayOfWeek>
+    }
+
+    // Horarios de entrenamiento (si manejas horas inicio/fin)
+    public java.util.Map<java.time.DayOfWeek, java.time.LocalTime[]> getHorariosSeleccionados() {
+        return new java.util.HashMap<>(this.horariosEntrenamiento);
+        // <-- por ejemplo, cada día -> [horaInicio, horaFin]
+    }
+
+    /** Devuelve la fecha de inicio elegida (puede ser null si no se eligió). */
+    public java.time.LocalDate getFechaInicioSeleccionada() {
+        return this.fechaInicio;
+    }
+
+    /** Devuelve la fecha de fin elegida (puede ser null si no se eligió). */
+    public java.time.LocalDate getFechaFinSeleccionada() {
+        return this.fechaFin;
+    }
+
+    public void setHorarioParaDia(DayOfWeek dia, LocalTime inicio, LocalTime fin) {
+        horariosEntrenamiento.put(dia, new LocalTime[]{inicio, fin});
+    }
+    private Set<DayOfWeek> diasEntrenamiento = new HashSet<>();
+
+   /* public Set<DayOfWeek> getDiasSeleccionados() {
+        return new HashSet<>(diasEntrenamiento);
+    }
+*/
+    public void addDiaEntrenamiento(DayOfWeek dia) {
+        diasEntrenamiento.add(dia);
+    }
+    public Map<Integer, int[]> getDiasYMinutosPorSemana(LocalDate inicio, LocalDate fin) {
+        Map<Integer, int[]> resultado = new HashMap<>(); // semana -> [dias, minutos]
+
+        LocalDate fecha = inicio;
+        int semana = 1;
+
+        while (!fecha.isAfter(fin)) {
+            int dias = 0;
+            int minutos = 0;
+
+            // recorro la semana completa
+            for (int i = 0; i < 7 && !fecha.isAfter(fin); i++) {
+                DayOfWeek dia = fecha.getDayOfWeek();
+                if (diasEntrenamiento.contains(dia)) {
+                    dias++;
+                    if (horariosEntrenamiento.containsKey(dia)) {
+                        LocalTime[] horario = horariosEntrenamiento.get(dia);
+                        if (horario != null && horario.length == 2) {
+                            minutos += java.time.Duration.between(horario[0], horario[1]).toMinutes();
+                        }
+                    }
+                }
+                fecha = fecha.plusDays(1);
+            }
+
+            resultado.put(semana, new int[]{dias, minutos});
+            semana++;
+        }
+
+        return resultado;
+    }
+
+
     private boolean seleccionadoEfectivo(LocalDate d) {
         // 1) Anclados mandan
         if (diasAnclados.contains(d)) return true;
@@ -1054,7 +1141,7 @@ public class CalendarioAnualDialog {
         monthsGrid = new TilePane();
         monthsGrid.setHgap(12);
         monthsGrid.setVgap(12);
-        monthsGrid.setPrefColumns(3);
+        monthsGrid.setPrefColumns(6);
         monthsGrid.setTileAlignment(Pos.TOP_CENTER);
         monthsGrid.setPadding(new Insets(10));
 
@@ -2182,7 +2269,7 @@ public class CalendarioAnualDialog {
                 StackPane.setAlignment(badge, Pos.TOP_RIGHT);
             }
 
-// tooltip con títulos
+            // tooltip con títulos
             if (evs != null && !evs.isEmpty()) {
                 StringBuilder tt = new StringBuilder("Eventos:\n");
                 for (Evento ev : evs) {
@@ -2193,7 +2280,7 @@ public class CalendarioAnualDialog {
                 b.setTooltip(new Tooltip(tt.toString()));
             }
 
-// wrap del botón + badge
+            // wrap del botón + badge
             StackPane sp = new StackPane(b);
             if (badge != null) sp.getChildren().add(badge);
 
@@ -2810,9 +2897,10 @@ public class CalendarioAnualDialog {
         //on.setOnAction(e -> { overrideOff.remove(d); overrideOn.add(d); aplicarEstilo(bRef, d); actualizarResumen(); });
         //off.setOnAction(e -> { overrideOn.remove(d); overrideOff.add(d); aplicarEstilo(bRef, d); actualizarResumen(); });
 
-        on.setDisable(  seleccionadoEfectivo(d)); // si ya está seleccionado, no tiene sentido "Seleccionar"
-        off.setDisable(!seleccionadoEfectivo(d)); // si NO está seleccionado, no tiene sentido "Deseleccionar"
-
+       // on.setDisable(  seleccionadoEfectivo(d)); // si ya está seleccionado, no tiene sentido "Seleccionar"
+        //off.setDisable(!seleccionadoEfectivo(d)); // si NO está seleccionado, no tiene sentido "Deseleccionar"
+        on.setOnAction(e -> { overrideOff.remove(d); overrideOn.add(d); aplicarEstilo(bRef, d); actualizarResumen(); });
+        off.setOnAction(e -> { overrideOn.remove(d); overrideOff.add(d); aplicarEstilo(bRef, d); actualizarResumen(); });
        /* on.setOnAction(e -> {
             overrideOff.remove(d);
             overrideOn.add(d);
@@ -2834,7 +2922,7 @@ public class CalendarioAnualDialog {
             reconstruirMeses();
         });*/
         // --- Acciones ---
-        on.setOnAction(e -> {
+      /*  on.setOnAction(e -> {
             // Selección puntual por menú (si no está fijado)
             if (!fijado) {
                 overrideOn.add(d);
@@ -2854,7 +2942,7 @@ public class CalendarioAnualDialog {
             aplicarEstilo(bRef, d);
             actualizarResumen();
             cm.hide();
-        });
+        });*/
 
         miFix.setOnAction(e -> {
             if (fijado) {
@@ -2897,11 +2985,11 @@ public class CalendarioAnualDialog {
         // Dentro del rango: no se permite seleccionar/deseleccionar con clic,
         // pero sí por menú. Aun así, si quieres obligar menú solo para anclar,
         // puedes deshabilitarlos cuando esté dentro del rango:
-        on.setDisable(dentroRango || sel);                  // ya seleccionado ⇒ no tiene sentido
-        off.setDisable(dentroRango || !sel || fijado);     // si no está sel o está fijado ⇒ no se quita aquí
+        //on.setDisable(dentroRango || sel);                  // ya seleccionado ⇒ no tiene sentido
+        //off.setDisable(dentroRango || !sel || fijado);     // si no está sel o está fijado ⇒ no se quita aquí
         // Rango siempre por menú, así que estas opciones siempre habilitadas:
-        beginRange.setDisable(false);
-        endRange.setDisable(false);
+        //beginRange.setDisable(false);
+        //endRange.setDisable(false);
 
         cm.getItems().addAll(
                 on, off,
@@ -2934,11 +3022,11 @@ public class CalendarioAnualDialog {
             }
             reconstruirMeses();
         });
-        return cm;
+       // return cm;
 
 
 
-        /*return new ContextMenu(
+        return new ContextMenu(
                 on, off,
                 new SeparatorMenuItem(),
                 beginRange, endRange,
@@ -2948,13 +3036,15 @@ public class CalendarioAnualDialog {
                 horario,
                 new SeparatorMenuItem(),
                 limpiarSemana
-        );*/
+        );
     }
     // Añade esto cerca de tus helpers
     private boolean dentroDelRango(LocalDate d) {
         if (!hayRango()) return false;
         return !d.isBefore(minDate()) && !d.isAfter(maxDate());
     }
+
+
     // ¿Está dentro del rango real?
     private boolean isInsideRange(LocalDate d) {
         if (fechaInicio == null || fechaFin == null) return false;
@@ -3170,6 +3260,8 @@ public class CalendarioAnualDialog {
         dlg.setScene(new Scene(root, 520, 320));
         dlg.showAndWait();
     }
+
+
     private void mostrarEventosDelDia(LocalDate fecha) {
         List<Evento> lista = eventosPorDia.getOrDefault(fecha, Collections.emptyList());
         Stage dlg = new Stage();
@@ -3230,5 +3322,6 @@ public class CalendarioAnualDialog {
         dlg.setScene(new Scene(root, 520, 360));
         dlg.showAndWait();
     }
+
 
 }
