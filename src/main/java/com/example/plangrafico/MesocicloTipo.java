@@ -6,6 +6,7 @@ import java.util.List;
 /*
 public enum MesocicloTipo { ACUMULACION, TRANSFORMACION, REALIZACION, BASE, ESPECIAL }
 */
+
 public enum MesocicloTipo {
 
     // —— Tradicional ——
@@ -40,6 +41,4 @@ public enum MesocicloTipo {
                 .filter(m -> m.modelo == modelo)
                 .toList();
     }
-
-
 }

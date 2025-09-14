@@ -32,7 +32,6 @@ public class EditorController {
     private Node vistaPlan;       // PlanGraficoView.crearVista(plan)
 
     private final PlanService service = new PlanService();
-    private CalendarioGrid grid;
 
     @FXML
     public void initialize() {
@@ -134,13 +133,11 @@ public class EditorController {
     private void construirGrid() {
         LocalDate ini = dpInicio.getValue();
         LocalDate fin = dpFin.getValue();
-        grid = new CalendarioGrid(ini, fin);
-        Region content = grid;
-        content.setStyle("-fx-padding: 10;");
+
+
        // scroll.setContent(content);
 
         // ... tu creación de CalendarGrid
-        this.vistaCalendario = grid; // donde grid es tu CalendarGrid
         if (vistaActual == Vista.CALENDARIO) scroll.setContent(vistaCalendario);
     }
 

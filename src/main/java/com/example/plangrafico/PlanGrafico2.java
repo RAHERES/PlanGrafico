@@ -4,13 +4,18 @@ package com.example.plangrafico;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import javafx.animation.Interpolator;
+import javafx.animation.KeyFrame;
+import javafx.animation.KeyValue;
+import javafx.animation.Timeline;
 import javafx.application.Application;
+import javafx.application.Platform;
 import javafx.beans.property.*;
 import javafx.geometry.*;
 import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
-import javafx.scene.input.ContextMenuEvent;
+import javafx.scene.input.*;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Rectangle;
@@ -30,42 +35,6 @@ import java.util.stream.Collectors;
 
 public class PlanGrafico2 extends Application {
 
-    // ====== Config base ======
-    private static final int COL_TITULOS_ANCHO = 140;
-    private static final int COL_SEMANA_ANCHO = 64;
-
-    private static final DateTimeFormatter DF_D_MMM = DateTimeFormatter.ofPattern("d MMM", new Locale("es", "MX"));
-    private static final DateTimeFormatter DF_DD_MM = DateTimeFormatter.ofPattern("dd/MM");
-
-    /**
-     * Fecha de nicio del programa de entrenamiento
-     * */
-    private DatePicker dpInicio;
-
-
-
-
-    /**
-     * Fecha en la que finaliza el plan de entrenamiento
-     */
-    private DatePicker dpFin;
-
-    private Spinner<Integer> spSemanas, spSes;
-
-    private boolean updatingUI = false;   // <—— evita bucles de eventos
-    private ComboBox<TipoPeriodizacion> cbTipo;
-
-    // Grupos (para mostrar/ocultar según selección)
-    private VBox grpClasicaPeriodos;
-    private VBox grpClasicaEtapas;
-    private VBox grpATR;
-
-    // Spinners ATR
-    private Spinner<Integer> spATR_A, spATR_T, spATR_R;
-
-    private Node selectedNode;                         // último nodo seleccionado
-    private final String SELECT_CSS = "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.35), 15, 0.2, 0, 0);";
-
     // Filas del grid
     private enum Row {
         SEM, INICIO, MES, PERIODO, ETAPA, MESOCICLO, MICRO, VOL_INT, CONTROLES, COMP, SES, MIN
@@ -83,7 +52,6 @@ public class PlanGrafico2 extends Application {
             this.type = type; this.startCol = startCol; this.endCol = endCol;
         }
     }
-
 
     // Colores por tipo de micro (hex)
     private static final Map<MicrocicloTipo, String> MICRO_BG = Map.of(
@@ -103,8 +71,6 @@ public class PlanGrafico2 extends Application {
             MicrocicloTipo.RESTABLECIMIENTO,"#757575"
     );
 
-
-
     // Fases ATR
     public enum ATRFase { ACUMULACION, TRANSFORMACION, REALIZACION }
 
@@ -119,30 +85,28 @@ public class PlanGrafico2 extends Application {
         Map<Integer, Integer> minutosPF    = new HashMap<>();   // minutos de Preparación Física
         Map<Integer, Integer> minutosTT    = new HashMap<>();   // minutos Técnico-Tácticos
         Map<Integer, Integer> microCargaPct= new HashMap<>();   // % de carga de cada micro (p.ej. 60, 70, 75, 50)
+        Map<Integer, MicrocicloTipo> microAsignaciones = new HashMap<>();
 
+        public Map<Integer, List<LocalDate>> sesionesPorSemana = new HashMap<>();
         public Map<Integer, Integer> diasTotal = new HashMap<>();
 
-        LocalDate inicio;
-        LocalDate fin;     // <—— NUEVO
+        LocalDate inicio; //inicio del plan
+        LocalDate fin;     // fin del plan
 
-        Map<Integer, MicrocicloTipo> microAsignaciones = new HashMap<>();
 
         int semanas;
         int sesionesSem;
         // dentro de PlanGrafico
-        public Map<Integer, List<LocalDate>> sesionesPorSemana = new HashMap<>();
         // Porcentajes por periodo (suman 100)
         int pctPrep, pctComp, pctTrans;
 
         // Porcentajes por etapa dentro de cada periodo (suman 100 en su periodo)
-        int pctPrepGeneral, pctPrepEspecial;
-        int pctCompPrecomp, pctCompComp;
+        int pctPrepGeneral,
+            pctPrepEspecial;
+        int pctCompPrecomp,
+            pctCompComp;
         int pctTransRecup; // el resto en transitorio lo dejamos como descanso activo (implícito)
 
-        /*// Tendencia vol/int en % (0-100)
-        int volIni = 100, volFin = 40;
-        int intIni = 40, intFin = 95;
-*/
         // === Tipo de periodización ===
         TipoPeriodizacion tipo = TipoPeriodizacion.LINEAL;
 
@@ -168,6 +132,39 @@ public class PlanGrafico2 extends Application {
 
     }
 
+    // ====== Config base ======
+    private static final int COL_TITULOS_ANCHO = 140;
+    private static final int COL_SEMANA_ANCHO = 64;
+
+    private static final DateTimeFormatter DF_D_MMM = DateTimeFormatter.ofPattern("d MMM", new Locale("es", "MX"));
+    private static final DateTimeFormatter DF_DD_MM = DateTimeFormatter.ofPattern("dd/MM");
+
+    /**
+     * Fecha de nicio del programa de entrenamiento
+     * */
+    private DatePicker dpInicio;
+
+    /**
+     * Fecha en la que finaliza el plan de entrenamiento
+     */
+    private DatePicker dpFin;
+
+    private Spinner<Integer> spSemanas, spSes;
+
+    private boolean updatingUI = false;   // <—— evita bucles de eventos
+    private ComboBox<TipoPeriodizacion> cbTipo;
+
+    // Grupos (para mostrar/ocultar según selección)
+    private VBox grpClasicaPeriodos;
+    private VBox grpClasicaEtapas;
+    private VBox grpATR;
+
+    // Spinners ATR
+    private Spinner<Integer> spATR_A, spATR_T, spATR_R;
+
+    private Node selectedNode;                         // último nodo seleccionado
+    private final String SELECT_CSS = "-fx-effect: dropshadow(gaussian, rgba(0,0,0,0.35), 15, 0.2, 0, 0);";
+
     // Estado UI
     private final ObjectProperty<PlanGrafico> plan = new SimpleObjectProperty<>(defaultPlan());
 
@@ -176,25 +173,173 @@ public class PlanGrafico2 extends Application {
     private BorderPane root;
 
     // Inputs
-  /*  private DatePicker dpInicio;
+  /*private DatePicker dpInicio;
     private Spinner<Integer> spSemanas, spSes;*/
-    private Spinner<Integer> spPrep, spComp, spTrans;
-    private Spinner<Integer> spPrepGen, spPrepEsp, spCompPre, spCompComp, spTransRec;
-    private Spinner<Integer> spVolIni, spVolFin, spIntIni, spIntFin;
+    private Spinner<Integer> spPrep,
+                            spComp,
+                            spTrans;
+    private Spinner<Integer> spPrepGen,
+                            spPrepEsp,
+                            spCompPre,
+                            spCompComp,
+                            spTransRec;
+    private Spinner<Integer> spVolIni,
+                            spVolFin,
+                            spIntIni,
+                            spIntFin;
+
+
+    // --- campos nuevos arriba de la clase ---
+    private StackPane sidebarWrap;
+    private ToggleButton handleBtn;
+    private final double W_EXP = 360;   // ancho expandido
+    private final double W_RAIL = 56;   // ancho en modo rail
+    private final BooleanProperty rail = new SimpleBooleanProperty(false);
+    private SplitPane split;
+
+    private Region panelIzquierdo;
+    private Node contenido;
+
+
+
+    private final DoubleProperty lastDividerPos = new SimpleDoubleProperty(0.22); // recuerda pos previa
 
     @Override
     public void start(Stage stage) {
-        root = new BorderPane();
+       /* root = new BorderPane();
         root.setLeft(panelInputs(stage));
         root.setCenter(new StackPane(new Label("Genera el plan para ver el gráfico →")) {{
             setPadding(new Insets(24));
         }});
 
+
         Scene scene = new Scene(root, 1280, 720);
         stage.setTitle("Plan Gráfico – MVP");
         stage.setScene(scene);
+        stage.setMaximized(true);
+        stage.show();*/
+        root = new BorderPane();
+        // --- en start(...) ---
+        panelIzquierdo = (Region) panelInputs(stage);
+
+        sidebarWrap = new StackPane(panelIzquierdo);
+        sidebarWrap.setMinWidth(W_RAIL);           // para que el rail no desaparezca
+        sidebarWrap.setPrefWidth(W_EXP);
+        sidebarWrap.setMaxWidth(Double.MAX_VALUE);
+        sidebarWrap.setStyle("""
+    -fx-background-color: transparent;   /* antes tenías un gradiente */
+    -fx-border-color: transparent;       /* quita el 1px del borde derecho */
+""");
+
+
+
+        // Botón “pill” flotante
+        handleBtn = new ToggleButton("⮜");
+        handleBtn.setFocusTraversable(false);
+        handleBtn.setOnAction(e -> toggleRail());
+        handleBtn.setStyle("""
+    -fx-background-color: white;
+    -fx-background-radius: 999;
+    -fx-border-radius: 999;
+    -fx-border-color: rgba(0,0,0,0.15);
+    -fx-padding: 4 8 4 8;
+    -fx-opacity: 0.85;
+""");
+        handleBtn.setOnMouseEntered(e -> handleBtn.setStyle(handleBtn.getStyle() + "-fx-opacity:1;"));
+        handleBtn.setOnMouseExited (e -> handleBtn.setStyle(handleBtn.getStyle().replace("-fx-opacity:1;", "-fx-opacity:0.85;")));
+
+        StackPane.setAlignment(handleBtn, Pos.TOP_RIGHT);
+        StackPane.setMargin(handleBtn, new Insets(8));
+        sidebarWrap.getChildren().add(handleBtn);
+
+        contenido = new StackPane(new Label("Genera el plan para ver el gráfico →")) {{
+            setPadding(new Insets(24));
+        }};
+
+        split = new SplitPane(sidebarWrap, contenido);
+        root = new BorderPane(split);
+        Scene scene = new Scene(root, 1280, 720);
+        stage.setScene(scene);
+        stage.setTitle("Plan Gráfico – MVP");
+        stage.setMaximized(true);
         stage.show();
+
+// coloca el divisor acorde al ancho expandido deseado
+        Platform.runLater(() -> {
+            double init = Math.min(0.4, W_EXP / split.getWidth());
+            split.setDividerPositions(init);
+            lastDividerPos.set(init);
+            beautifySplit();  // opcional: afina el divisor
+        });
+
     }
+
+    private void toggleRailPretty() {
+        boolean toRail = !rail.get();
+        rail.set(toRail);
+        double target = toRail ? W_RAIL : W_EXP;
+
+        // Cambia flecha
+        handleBtn.setText(toRail ? "⮞" : "⮜");
+
+        // Oculta/gestiona el contenido del panel cuando está colapsado
+        panelIzquierdo.setVisible(!toRail);
+        panelIzquierdo.setManaged(!toRail);
+
+        // Anima el ancho del wrapper (queda súper limpio)
+        Timeline t = new Timeline(
+                new KeyFrame(javafx.util.Duration.millis(240),
+                        new KeyValue(sidebarWrap.prefWidthProperty(), target, Interpolator.EASE_BOTH),
+                        new KeyValue(sidebarWrap.maxWidthProperty(),  target, Interpolator.EASE_BOTH)
+                )
+        );
+        t.play();
+    }
+
+    private void beautifySplit() {
+        // Fondo del SplitPane
+        split.setStyle("-fx-background-color: transparent;");
+
+        // Divisor invisible y sin ancho
+        split.lookupAll(".split-pane-divider").forEach(div -> {
+            div.setMouseTransparent(true); // opcional: que no capture clicks
+            div.setStyle("""
+            -fx-background-color: transparent;
+            -fx-border-color: transparent;
+            -fx-background-insets: 0;
+            -fx-padding: 0;            /* quita el “grosor” */
+        """);
+
+            // Elimina el “grabber” (las rayitas dobles)
+            div.lookupAll(".vertical-grabber").forEach(g ->
+                    g.setStyle("-fx-background-color: transparent; -fx-padding: 0;")
+            );
+            div.lookupAll(".horizontal-grabber").forEach(g ->
+                    g.setStyle("-fx-background-color: transparent; -fx-padding: 0;")
+            );
+        });
+    }
+
+    private void toggleRail() {
+        SplitPane.Divider div = split.getDividers().get(0);
+
+        if (!rail.get()) {                // → colapsar a rail
+            lastDividerPos.set(div.getPosition());         // recuerda posición actual
+            double railPos = Math.max(0.0, Math.min(0.35, W_RAIL / Math.max(1.0, split.getWidth())));
+            animateDivider(div.positionProperty(), railPos);
+            // esconde el contenido pesado del panel si quieres:
+            panelIzquierdo.setVisible(false);
+            panelIzquierdo.setManaged(false);
+            rail.set(true);
+        } else {                          // → expandir a la posición previa
+            panelIzquierdo.setManaged(true);
+            panelIzquierdo.setVisible(true);
+            double target = (lastDividerPos.get() < 0.08 ? 0.22 : lastDividerPos.get());
+            animateDivider(div.positionProperty(), target);
+            rail.set(false);
+        }
+    }
+
 
 
     // ====== UI: Panel de entradas ======
@@ -616,15 +761,14 @@ public class PlanGrafico2 extends Application {
       /*  for (int col = 1; col <= pg.semanas; col++) {
             addCenterText(Row.SES, col, String.valueOf(pg.sesionesSem));
         }*/
+
         for (int col = 1; col <= pg.semanas; col++) {
+
             int sesiones = pg.sesionesPorSemana.getOrDefault(col, List.of()).size();
             addCenterText(Row.SES, col, String.valueOf(sesiones));
         }
 
-
-
         pintarMinutosFila();
-
 
         // Fondo de celdas "semana"
         for (int col = 1; col <= pg.semanas; col++) {
@@ -643,7 +787,7 @@ public class PlanGrafico2 extends Application {
         // Columna títulos
         int r = 0;
         addTitulo(grid, r++, "SEM");
-        addTitulo(grid, r++, "INICIO");
+        addTitulo(grid, r++, "FECHA");
         addTitulo(grid, r++, "MES");
         addTitulo(grid, r++, "PERIODO");
         addTitulo(grid, r++, "ETAPA");
@@ -891,9 +1035,6 @@ public class PlanGrafico2 extends Application {
                 miEditSem, miClearSem, miClearRango
         );
 
-
-
-
 // … y en el handler del contexto (donde calculas `col`):
         grid.addEventHandler(ContextMenuEvent.CONTEXT_MENU_REQUESTED, ev -> {
             Point2D pxy = new Point2D(ev.getSceneX(), ev.getSceneY());
@@ -932,10 +1073,32 @@ public class PlanGrafico2 extends Application {
             }
         });
 */
-        root.setCenter(new ScrollPane(grid) {{
+       /* root.setCenter(new ScrollPane(grid) {{
             setFitToWidth(true);
             setFitToHeight(true);
-        }});
+        }});*/
+
+        ScrollPane sc = new ScrollPane(grid);
+        sc.setFitToWidth(true);
+        sc.setFitToHeight(true);
+
+        // reemplaza el panel derecho del SplitPane
+        contenido = sc;
+        if (split != null) {
+            if (split.getItems().size() < 2) {
+                split.getItems().add(contenido);
+            } else {
+                split.getItems().set(1, contenido);
+            }
+        } else {
+            // fallback (no debería ocurrir si llamaste a crearUI() en start)
+
+            sc.setFitToWidth(true);
+            sc.setFitToHeight(true);
+            if (split.getItems().size() < 2) split.getItems().add(sc);
+            else split.getItems().set(1, sc);
+            contenido = sc;
+        }
     }
 
     private void pintarMinutosFila() {
@@ -958,6 +1121,67 @@ public class PlanGrafico2 extends Application {
             Tooltip.install(cell, new Tooltip(tip));
         }
     }
+
+    // Campos:
+
+    private final BooleanProperty collapsed = new SimpleBooleanProperty(false);
+
+    private Node crearUI() {
+        // panelIzquierdo = construirPanelIzquierdo();  // YA lo tienes
+        // contenido      = construirContenido();       // YA lo tienes
+
+        split = new SplitPane(panelIzquierdo, contenido);
+        split.setDividerPositions(lastDividerPos.get());
+        split.setFocusTraversable(false);
+
+        // Botón para colapsar/expandir
+        ToggleButton btn = new ToggleButton("⮜"); // cambia a "⮞" cuando está colapsado
+        btn.selectedProperty().bindBidirectional(collapsed);
+        btn.selectedProperty().addListener((obs, was, is) -> btn.setText(is ? "⮞" : "⮜"));
+
+        btn.setOnAction(e -> toggleSidebar());
+
+        // Acceso rápido con teclado (Ctrl+B)
+        split.addEventFilter(KeyEvent.KEY_PRESSED, ke -> {
+            if (new KeyCodeCombination(KeyCode.B, KeyCombination.CONTROL_DOWN).match(ke)) {
+                collapsed.set(!collapsed.get());
+                ke.consume();
+            }
+        });
+
+        // Overlay del botón en la esquina superior izquierda
+        StackPane overlay = new StackPane(split);
+        StackPane.setAlignment(btn, Pos.TOP_LEFT);
+        overlay.getChildren().add(btn);
+        overlay.setPadding(new Insets(6)); // separa el botón del borde
+
+        return overlay;
+    }
+
+    private void toggleSidebar() {
+        // Guardar/restaurar posición del divisor
+        final SplitPane.Divider div = split.getDividers().get(0);
+
+        if (collapsed.get()) { // estamos colapsando
+            lastDividerPos.set(div.getPosition());
+            animateDivider(div.positionProperty(), 0.0);
+            // (opcional) ocultar el nodo para que no “robe” eventos
+            panelIzquierdo.setMouseTransparent(true);
+        } else { // estamos expandiendo
+            double destino = lastDividerPos.get() <= 0.05 ? 0.25 : lastDividerPos.get();
+            animateDivider(div.positionProperty(), destino);
+            panelIzquierdo.setMouseTransparent(false);
+        }
+    }
+
+    private void animateDivider(DoubleProperty prop, double target) {
+        Timeline t = new Timeline(
+                new KeyFrame(javafx.util.Duration.millis(220),
+                        new KeyValue(prop, target, Interpolator.EASE_BOTH))
+        );
+        t.play();
+    }
+
 
 
     private void abrirEditorTiemposRango() {
@@ -1200,6 +1424,7 @@ public class PlanGrafico2 extends Application {
             }
         }
     }
+
     private void clearCell(Row row, int col) {
         // elimina contenidos “flotantes” (chips/labels) pero preserva el StackPane de fondo
         grid.getChildren().removeIf(n ->
@@ -1233,52 +1458,53 @@ public class PlanGrafico2 extends Application {
         };
     }
 
-
     private void agruparMesesComoSpans(List<LocalDate> semanaInicios) {
         if (semanaInicios.isEmpty()) return;
-        int startCol = 1;
+
+        int startCol = 1;                                   // columnas 1-based en tu grid
         Month mActual = semanaInicios.get(0).getMonth();
-        for (int i = 1; i < semanaInicios.size(); i++) {
-            Month m = semanaInicios.get(i).getMonth();
-            if (m != mActual) {
-                int len = i - (startCol - 1);
-                String etiqueta = mActual.getDisplayName(TextStyle.FULL_STANDALONE, new Locale("es", "MX"));
-                span(Row.MES, startCol, len, label(capitalize(etiqueta)), Color.web("#EEEEEE"));
-                startCol = i + 1;
-                mActual = m;
+        Locale esMX = new Locale("es","MX");
+
+        for (int i = 1, n = semanaInicios.size(); i <= n; i++) {
+            boolean finDeBloque = (i == n) || (semanaInicios.get(i).getMonth() != mActual);
+            if (finDeBloque) {
+                int len = i - (startCol - 1);               // i apunta a la primera semana del mes nuevo (o al final)
+                String etiqueta = capitalize(mActual.getDisplayName(TextStyle.FULL_STANDALONE, esMX));
+                span(Row.MES, startCol, len, label(etiqueta), Color.web("#EEEEEE"));
+
+                if (i < n) {                                // prepara el siguiente bloque
+                    startCol = i + 1;
+                    mActual = semanaInicios.get(i).getMonth();
+                }
             }
         }
-        // último
-      /*  int len = semanaInicios.size() - (startCol - 1);
-        String etiqueta = mActual.getDisplayName(TextStyle.FULL_STANDALONE, new Locale("es", "MX"));
-        span(Row.MES, startCol, len, label(capitalize(etiqueta)), Color.web("#EEEEEE"));*/
     }
+
 
     private int pintarEtapas(EtapaTipo a, EtapaTipo b, Map<EtapaTipo, Color> colEtapa,
                              List<int[]> mesociclos, int colBase, Map<EtapaTipo, Integer> m) {
+
         int la = m.getOrDefault(a, 0);
         int lb = m.getOrDefault(b, 0);
+
         if (la > 0) {
             span(Row.ETAPA, colBase, la, label(etq(a)), colEtapa.get(a));
             mesociclos.add(new int[]{colBase, colBase + la - 1});
             colBase += la;
         }
+
         if (lb > 0) {
             span(Row.ETAPA, colBase, lb, label(etq(b)), colEtapa.get(b));
             mesociclos.add(new int[]{colBase, colBase + lb - 1});
             colBase += lb;
         }
+
         return colBase;
     }
 
     private String etq(EtapaTipo e) {
-        return switch (e) {
-            case GENERAL -> "General";
-            case ESPECIAL -> "Especial";
-            case PRECOMPETITIVA -> "Precomp.";
-            case COMPETITIVA -> "Competitiva";
-            case RECUPERACION -> "Recup.";
-        };
+        return e.name();
+
     }
 
     private void pintarVolumenIntensidad(PlanGrafico pg) {
