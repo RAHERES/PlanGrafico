@@ -128,6 +128,9 @@ public final class PlanGraficoRenderer {
         return grid;
     }
 
+
+
+
     // ---------------- helpers de render ----------------
 
     private void addSimpleRow(GridPane grid, int rowIndex, List<WeekCell> weeks,

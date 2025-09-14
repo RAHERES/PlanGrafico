@@ -29,6 +29,7 @@ import java.time.*;
 import java.time.format.DateTimeFormatter;
 import java.time.format.TextStyle;
 import java.time.temporal.ChronoUnit;
+import java.time.temporal.TemporalAdjusters;
 import java.util.*;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -734,6 +735,27 @@ public class PlanGrafico2 extends Application {
             return pg;
         }
 
+    // Mes que tiene más días dentro de la semana (lunes–domingo) que contiene 'd'
+    private Month mesDominante(LocalDate d) {
+        LocalDate lunes   = d.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
+        LocalDate domingo = d.with(TemporalAdjusters.nextOrSame(DayOfWeek.SUNDAY));
+
+        Month mesA = lunes.getMonth();
+        Month mesB = domingo.getMonth();
+        if (mesA == mesB) return mesA; // toda la semana cae en el mismo mes
+
+        // Días de la semana que pertenecen al mes del lunes
+        LocalDate finRango = lunes.plusDays(6);
+        LocalDate finMesA  = lunes.with(TemporalAdjusters.lastDayOfMonth());
+        LocalDate to       = finRango.isBefore(finMesA) ? finRango : finMesA;
+
+        long diasMesA = ChronoUnit.DAYS.between(lunes, to) + 1; // inclusivo
+        long diasMesB = 7 - diasMesA;                           // resto de la semana
+
+        return (diasMesA > diasMesB) ? mesA : mesB; // mayoría
+    }
+
+
     // ====== Dibujo del plan ======
     private void dibujarPlan() {
         var pg = plan.get();
@@ -799,7 +821,7 @@ public class PlanGrafico2 extends Application {
         addTitulo(grid, r++, "SES");
         addTitulo(grid, r++, "MIN");
 
-        // SEM + INICIO
+      /*  // SEM + INICIO
         LocalDate start = pg.inicio;
         List<LocalDate> semanaInicios = new ArrayList<>();
         for (int i = 0; i < pg.semanas; i++) {
@@ -807,7 +829,20 @@ public class PlanGrafico2 extends Application {
             semanaInicios.add(s);
             addCenterText(Row.SEM, i+1, String.valueOf(i+1));
             addCenterText(Row.INICIO, i+1, s.format(DF_DD_MM));
+        }*/
+
+        LocalDate start = pg.inicio;
+        List<LocalDate> semanaInicios = new ArrayList<>();
+        for (int i = 0; i < pg.semanas; i++) {
+            LocalDate d = start.plusWeeks(i);
+            LocalDate lunes = d.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
+            semanaInicios.add(lunes);                    // ← importante
+
+            addCenterText(Row.SEM,    i+1, String.valueOf(i+1));
+            addCenterText(Row.INICIO, i+1, etiquetaLunesDomingo(d)); // "dd / dd"
         }
+
+
 
         // MES: spans agrupados por mes
         agruparMesesComoSpans(semanaInicios);
@@ -986,7 +1021,7 @@ public class PlanGrafico2 extends Application {
             while (idx <= endCol) {
                 int remain = endCol - idx + 1;
                 int take = (remain >= 6) ? 5 : Math.min(remain, Math.max(4, remain));
-                span(Row.MESOCICLO, idx, take, label("Meso"), Color.web("#E1BEE7"));
+             //   span(Row.MESOCICLO, idx, take, label("Meso"), Color.web("#E1BEE7"));
                 idx += take;
             }
         }
@@ -1099,6 +1134,31 @@ public class PlanGrafico2 extends Application {
             else split.getItems().set(1, sc);
             contenido = sc;
         }
+    }
+
+    // Formatos
+    private static final DateTimeFormatter DF_D    = DateTimeFormatter.ofPattern("dd");
+    private static final DateTimeFormatter DF_DDMM = DateTimeFormatter.ofPattern("dd/MM");
+
+    // Devuelve "dd / dd" si es el mismo mes, si no "dd/MM / dd/MM".
+// Ajusta el último día para no pasar de pg.fin si el plan termina antes.
+    private String etiquetaRangoSemana(LocalDate ini, LocalDate finPlan) {
+        LocalDate fin = ini.plusDays(6);
+        if (finPlan != null && fin.isAfter(finPlan)) fin = finPlan;
+
+        if (ini.getMonth() == fin.getMonth()) {
+            // compacto: "15 / 21" (mismo mes)
+            return ini.format(DF_D) + " / " + fin.format(DF_DDMM);
+        } else {
+            // cruza de mes: "29/09 / 05/10"
+            return ini.format(DF_DDMM) + " / " + fin.format(DF_DDMM);
+        }
+    }
+    // Devuelve "dd / dd" usando LUNES como inicio y DOMINGO como fin
+    private String etiquetaLunesDomingo(LocalDate anyDayInWeek) {
+        LocalDate lunes   = anyDayInWeek.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
+        LocalDate domingo = anyDayInWeek.with(TemporalAdjusters.nextOrSame(DayOfWeek.SUNDAY));
+        return lunes.format(DF_D) + " / " + domingo.format(DF_D);
     }
 
     private void pintarMinutosFila() {
@@ -1461,20 +1521,20 @@ public class PlanGrafico2 extends Application {
     private void agruparMesesComoSpans(List<LocalDate> semanaInicios) {
         if (semanaInicios.isEmpty()) return;
 
-        int startCol = 1;                                   // columnas 1-based en tu grid
-        Month mActual = semanaInicios.get(0).getMonth();
-        Locale esMX = new Locale("es","MX");
+        int startCol = 1;
+        Locale esMX = new Locale("es", "MX");
+        Month mActual = mesDominante(semanaInicios.get(0));
 
         for (int i = 1, n = semanaInicios.size(); i <= n; i++) {
-            boolean finDeBloque = (i == n) || (semanaInicios.get(i).getMonth() != mActual);
+            boolean finDeBloque = (i == n) || (mesDominante(semanaInicios.get(i)) != mActual);
             if (finDeBloque) {
-                int len = i - (startCol - 1);               // i apunta a la primera semana del mes nuevo (o al final)
+                int len = i - (startCol - 1);
                 String etiqueta = capitalize(mActual.getDisplayName(TextStyle.FULL_STANDALONE, esMX));
                 span(Row.MES, startCol, len, label(etiqueta), Color.web("#EEEEEE"));
 
-                if (i < n) {                                // prepara el siguiente bloque
+                if (i < n) {
                     startCol = i + 1;
-                    mActual = semanaInicios.get(i).getMonth();
+                    mActual = mesDominante(semanaInicios.get(i));
                 }
             }
         }
