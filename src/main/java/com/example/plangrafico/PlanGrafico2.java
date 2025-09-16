@@ -4,10 +4,7 @@ package com.example.plangrafico;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
-import javafx.animation.Interpolator;
-import javafx.animation.KeyFrame;
-import javafx.animation.KeyValue;
-import javafx.animation.Timeline;
+import javafx.animation.*;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.beans.property.*;
@@ -15,6 +12,7 @@ import javafx.geometry.*;
 import javafx.scene.Node;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
+import javafx.scene.effect.DropShadow;
 import javafx.scene.input.*;
 import javafx.scene.layout.*;
 import javafx.scene.paint.Color;
@@ -22,6 +20,7 @@ import javafx.scene.shape.Rectangle;
 import javafx.scene.text.Font;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
+import javafx.util.Duration;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -38,7 +37,7 @@ public class PlanGrafico2 extends Application {
 
     // Filas del grid
     private enum Row {
-        SEM, INICIO, MES, PERIODO, ETAPA, MESOCICLO, MICRO, VOL_INT, CONTROLES, COMP, SES, MIN
+        SEM, INICIO, MES, PERIODO, ETAPA, MESOCICLO, MICRO,   PCT_MICRO,      VOL_INT, CONTROLES, COMP, SES, MIN
     }
 
     // Qué parte del plan se selecciona
@@ -72,11 +71,50 @@ public class PlanGrafico2 extends Application {
             MicrocicloTipo.RESTABLECIMIENTO,"#757575"
     );
 
+    public enum MesocicloTipo {
+        ENTRANTE("Entrante"),
+        BASICO_DESARROLLADOR("Básico desarrollador"),
+        BASICO_ESTABILIZADOR("Básico estabilizador"),
+        PRECOMPETITIVO("Precompetitivo"),
+        COMPETITIVO("Competitivo"),
+        ACUMULACION("Acumulación"),
+        TRANSFORMACION("Transformación"),
+        REALIZACION("Realización");
+
+        private final String etiqueta;
+        MesocicloTipo(String etiqueta){ this.etiqueta = etiqueta; }
+        public String etiqueta(){ return etiqueta; }
+        @Override public String toString(){ return etiqueta; }
+    }
+
+
+    // Representa un span de mesociclo en la fila MESOCICLO
+    public static class Mesociclo {
+        public int startCol;       // columna de inicio (1-based)
+        public int len;            // duración en semanas
+        public MesocicloTipo tipo; // tipo
+
+        public Mesociclo() {}      // para JSON
+        public Mesociclo(int startCol, int len, MesocicloTipo tipo) {
+            this.startCol = startCol; this.len = len; this.tipo = tipo;
+        }
+    }
+
+    private static final Map<MesocicloTipo, Color> MESO_BG = Map.of(
+            MesocicloTipo.ENTRANTE,           Color.web("#D1C4E9"),
+            MesocicloTipo.BASICO_DESARROLLADOR,     Color.web("#B39DDB"),
+            MesocicloTipo.PRECOMPETITIVO, Color.web("#CE93D8"),
+            MesocicloTipo.COMPETITIVO,   Color.web("#B0BEC5")
+    );
+
+
     // Fases ATR
     public enum ATRFase { ACUMULACION, TRANSFORMACION, REALIZACION }
 
     // Tipos
     public enum EtapaTipo { GENERAL, ESPECIAL, PRECOMPETITIVA, COMPETITIVA, RECUPERACION }
+
+
 
     // Modelo minimal
     public static class PlanGrafico {
@@ -87,6 +125,9 @@ public class PlanGrafico2 extends Application {
         Map<Integer, Integer> minutosTT    = new HashMap<>();   // minutos Técnico-Tácticos
         Map<Integer, Integer> microCargaPct= new HashMap<>();   // % de carga de cada micro (p.ej. 60, 70, 75, 50)
         Map<Integer, MicrocicloTipo> microAsignaciones = new HashMap<>();
+
+        public List<Mesociclo> mesociclosManuales = new ArrayList<>();
+
 
         public Map<Integer, List<LocalDate>> sesionesPorSemana = new HashMap<>();
         public Map<Integer, Integer> diasTotal = new HashMap<>();
@@ -130,6 +171,22 @@ public class PlanGrafico2 extends Application {
 
         public List<DayOfWeek> getDiasEntrenamiento() { return diasEntrenamiento; }
         public Map<DayOfWeek, LocalTime[]> getHorariosEntrenamiento() { return horariosEntrenamiento; }
+
+
+        // === Microciclo por días ===
+        public static class Micro {
+            public LocalDate start;      // día de inicio (inclusive)
+            public int lenDays;          // duración en días
+            public MicrocicloTipo tipo;  // tipo de micro
+            public int cargaPct;         // % de carga del micro (0..120)
+
+            public Micro() {}
+            public Micro(LocalDate start, int lenDays, MicrocicloTipo tipo, int cargaPct) {
+                this.start = start; this.lenDays = Math.max(1, lenDays);
+                this.tipo = tipo; this.cargaPct = cargaPct;
+            }
+        }
+        public List<Micro> microDiasManuales = new ArrayList<>();
 
     }
 
@@ -275,6 +332,308 @@ public class PlanGrafico2 extends Application {
 
     }
 
+    // Monday de la columna (1-based)
+    private LocalDate mondayOfCol(int col) {
+        LocalDate firstMonday = plan.get().inicio.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
+        return firstMonday.plusWeeks(col - 1);
+    }
+
+    private void insertarMicroConConfirmacion(PlanGrafico.Micro nuevo, PlanGrafico.Micro editando) {
+        var pg = plan.get();
+
+        // copia sin el que se edita
+        List<PlanGrafico.Micro> lista = new ArrayList<>(pg.microDiasManuales);
+        if (editando != null) lista.remove(editando);
+        lista.sort(Comparator.comparing(m -> m.start));
+
+        // Clamp a rango del plan
+        LocalDate planIni = pg.inicio, planFin = pg.fin;
+        LocalDate ns = nuevo.start.isBefore(planIni) ? planIni : nuevo.start;
+        LocalDate ne = end(nuevo).isAfter(planFin) ? planFin : end(nuevo);
+        if (ne.isBefore(ns)) { alert("Fuera de rango."); return; }
+        nuevo.start = ns; nuevo.lenDays = (int) ChronoUnit.DAYS.between(ns, ne) + 1;
+
+        // Vecinos
+        PlanGrafico.Micro prev = null, next = null;
+        for (PlanGrafico.Micro m : lista) {
+            if (end(m).isBefore(ns)) prev = m;
+            if (!m.start.isBefore(ns)) { next = m; break; }
+        }
+
+        // no invadir al anterior → mover el inicio al día siguiente
+        if (prev != null && !ns.isAfter(end(prev))) {
+            ns = end(prev).plusDays(1);
+            if (ns.isAfter(planFin)) { alert("No hay espacio disponible."); return; }
+            LocalDate tmpEnd = ns.plusDays(nuevo.lenDays - 1);
+            if (tmpEnd.isAfter(planFin)) tmpEnd = planFin;
+            nuevo.start = ns; nuevo.lenDays = (int) ChronoUnit.DAYS.between(ns, tmpEnd) + 1;
+            ne = tmpEnd;
+        }
+
+        // invado al siguiente → preguntar
+        if (next != null && !ne.isBefore(next.start)) {
+            ButtonType BTN_ACORTAR_NUEVO  = new ButtonType("Acortar nuevo", ButtonBar.ButtonData.YES);
+            ButtonType BTN_RECORTAR_SIG   = new ButtonType("Recortar siguiente", ButtonBar.ButtonData.NO);
+            ButtonType BTN_CANCELAR       = ButtonType.CANCEL;
+
+            Alert a = new Alert(Alert.AlertType.CONFIRMATION,
+                    "El nuevo [" + ns + " – " + ne + "] invade al siguiente [" +
+                            next.start + " – " + end(next) + "].\n\n¿Qué deseas hacer?",
+                    BTN_ACORTAR_NUEVO, BTN_RECORTAR_SIG, BTN_CANCELAR);
+            a.setHeaderText("Resolver solape de microciclos");
+            var r = a.showAndWait();
+            if (r.isEmpty() || r.get() == BTN_CANCELAR) return;
+
+            if (r.get() == BTN_ACORTAR_NUEVO) {
+                LocalDate finNuevo = next.start.minusDays(1);
+                if (finNuevo.isBefore(ns)) { alert("Sin espacio suficiente."); return; }
+                nuevo.lenDays = (int) ChronoUnit.DAYS.between(ns, finNuevo) + 1;
+
+            } else if (r.get() == BTN_RECORTAR_SIG) {
+                LocalDate newStartNext = ne.plusDays(1);
+                if (newStartNext.isAfter(end(next))) {
+                    pg.microDiasManuales.remove(next);
+                } else {
+                    int newLenNext = (int) ChronoUnit.DAYS.between(newStartNext, end(next)) + 1;
+                    next.start = newStartNext;
+                    next.lenDays = newLenNext;
+                }
+            }
+        }
+
+        // “carva” los solapes restantes (no destructivo)
+        List<PlanGrafico.Micro> out = new ArrayList<>();
+        for (PlanGrafico.Micro m : pg.microDiasManuales) {
+            if (editando != null && m == editando) continue;
+
+            LocalDate ms = m.start, me = end(m);
+            if (!overlaps(ms, me, nuevo.start, end(nuevo))) { out.add(m); continue; }
+
+            // cubierto por completo
+            if (!ms.isBefore(nuevo.start) && !me.isAfter(end(nuevo))) continue;
+
+            // partido en dos
+            if (ms.isBefore(nuevo.start) && me.isAfter(end(nuevo))) {
+                LocalDate ls = ms, le = nuevo.start.minusDays(1);
+                LocalDate rs = end(nuevo).plusDays(1), re = me;
+                if (!le.isBefore(ls)) out.add(new PlanGrafico.Micro(ls, (int) ChronoUnit.DAYS.between(ls, le) + 1, m.tipo, m.cargaPct));
+                if (!re.isBefore(rs)) out.add(new PlanGrafico.Micro(rs, (int) ChronoUnit.DAYS.between(rs, re) + 1, m.tipo, m.cargaPct));
+                continue;
+            }
+            // recortes simples
+            if (ms.isBefore(nuevo.start) && !me.isBefore(nuevo.start)) {
+                LocalDate le = nuevo.start.minusDays(1);
+                if (!le.isBefore(ms)) out.add(new PlanGrafico.Micro(ms, (int) ChronoUnit.DAYS.between(ms, le) + 1, m.tipo, m.cargaPct));
+            } else if (!ms.isAfter(end(nuevo)) && me.isAfter(end(nuevo))) {
+                LocalDate rs = end(nuevo).plusDays(1);
+                if (!me.isBefore(rs)) out.add(new PlanGrafico.Micro(rs, (int) ChronoUnit.DAYS.between(rs, me) + 1, m.tipo, m.cargaPct));
+            }
+        }
+        out.add(new PlanGrafico.Micro(nuevo.start, nuevo.lenDays, nuevo.tipo, nuevo.cargaPct));
+        out.sort(Comparator.comparing(m -> m.start));
+        pg.microDiasManuales.clear();
+        pg.microDiasManuales.addAll(out);
+
+        // actualiza % semanal y repaint
+        recalcularPctCargaSemanalDesdeMicros();
+        pintarMicrosDias();
+    }
+
+    private void abrirDialogoMicro(LocalDate semanaLunes) {
+        var pg = plan.get();
+
+        // fecha “representativa” clicada (mitad de la semana)
+        LocalDate probe = semanaLunes.plusDays(3);
+        PlanGrafico.Micro existente = buscarMicroEnFecha(probe);
+
+        Dialog<ButtonType> dlg = new Dialog<>();
+        dlg.setTitle(existente == null ? "Nuevo microciclo" : "Editar microciclo");
+        dlg.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+
+        GridPane gp = new GridPane();
+        gp.setHgap(10); gp.setVgap(8); gp.setPadding(new Insets(10));
+
+        DatePicker dpInicio = new DatePicker(existente == null ? semanaLunes : existente.start);
+        dpInicio.setDayCellFactory(picker -> new DateCell() {
+            @Override
+            public void updateItem(LocalDate item, boolean empty) {
+                super.updateItem(item, empty);   // ¡siempre!
+                if (empty || item == null) {
+                    setDisable(true);
+                    setText(null);
+                    return;
+                }
+
+                // Ejemplo: solo permitir LUNES y dentro del rango del plan
+                boolean isMonday = item.getDayOfWeek() == DayOfWeek.MONDAY;
+                boolean inRange = !item.isBefore(plan.get().inicio) && !item.isAfter(plan.get().fin);
+
+                setDisable(!(isMonday && inRange));
+                setOpacity(isMonday && inRange ? 1.0 : 0.35);
+            }
+        });
+
+        int maxDays = (int) ChronoUnit.DAYS.between(dpInicio.getValue(), pg.fin) + 1;
+        Spinner<Integer> spDias = spinner(1, Math.max(1, maxDays), existente == null ? 7 : existente.lenDays, 1);
+
+        ComboBox<MicrocicloTipo> cbTipo = new ComboBox<>();
+        cbTipo.getItems().setAll(MicrocicloTipo.values());
+        cbTipo.setValue(existente == null ? MicrocicloTipo.ORDINARIO : existente.tipo);
+
+        Spinner<Integer> spCarga = spinner(0, 120,
+                existente == null ? defaultPctFor(cbTipo.getValue()) : existente.cargaPct, 1);
+
+        cbTipo.valueProperty().addListener((o,ov,nv)-> spCarga.getValueFactory().setValue(defaultPctFor(nv)));
+
+        gp.add(new Label("Inicio (fecha):"), 0, 0); gp.add(dpInicio, 1, 0);
+        gp.add(new Label("Duración (días):"), 0, 1); gp.add(spDias, 1, 1);
+        gp.add(new Label("Tipo:"),            0, 2); gp.add(cbTipo, 1, 2);
+        gp.add(new Label("% de carga:"),      0, 3); gp.add(spCarga,1, 3);
+
+        dlg.getDialogPane().setContent(gp);
+        var res = dlg.showAndWait();
+        if (res.isEmpty() || res.get() != ButtonType.OK) return;
+
+        PlanGrafico.Micro nuevo = new PlanGrafico.Micro(
+                dpInicio.getValue(),
+                spDias.getValue(),
+                cbTipo.getValue(),
+                spCarga.getValue()
+        );
+
+        insertarMicroConConfirmacion(nuevo, existente);
+    }
+
+    private void pintarPorcentajeMicroEnFila(Row fila) {
+        var pg = plan.get();
+        for (int col = 1; col <= pg.semanas; col++) {
+            clearCell(fila, col);
+            Integer pct = pg.microCargaPct.get(col);
+            if (pct == null) continue;
+            Label l = new Label(String.valueOf(pct));
+            l.setStyle("-fx-font-size: 11px; -fx-text-fill: #455A64;");
+            l.setMaxSize(Double.MAX_VALUE, Double.MAX_VALUE);
+            l.setAlignment(Pos.CENTER);
+            GridPane.setRowIndex(l, fila.ordinal());
+            GridPane.setColumnIndex(l, col);
+            grid.getChildren().add(l);
+        }
+    }
+
+
+    private void pintarMicrosDias() {
+        var pg = plan.get();
+        // limpia fila
+        for (int col = 1; col <= pg.semanas; col++) clearCell(Row.MICRO, col);
+
+        for (PlanGrafico.Micro m : pg.microDiasManuales) {
+            LocalDate ms = m.start, me = end(m);
+
+            for (int col = 1; col <= pg.semanas; col++) {
+                LocalDate ws = mondayOfCol(col), we = sundayOfCol(col);
+                LocalDate s = ms.isAfter(ws) ? ms : ws;
+                LocalDate e = me.isBefore(we) ? me : we;
+                if (s.isAfter(e)) continue;
+
+                int days = (int) ChronoUnit.DAYS.between(s, e) + 1;
+                int offset = (int) ChronoUnit.DAYS.between(ws, s); // 0..6
+
+                StackPane cell = getCell(Row.MICRO, col);
+
+                // Spacer + barra proporcional
+                Region spacer = new Region();
+                Region bar = new Region();
+                spacer.prefWidthProperty().bind(cell.widthProperty().multiply(offset / 7.0));
+                bar.prefWidthProperty().bind(cell.widthProperty().multiply(days / 7.0).subtract(6));
+                bar.setMinHeight(18);
+
+                String bg = MICRO_BG.getOrDefault(m.tipo, "#f0f0f0");
+                String bd = MICRO_BORDER.getOrDefault(m.tipo, "#9E9E9E");
+                bar.setStyle("""
+                -fx-background-color: %s;
+                -fx-border-color: %s;
+                -fx-border-radius: 8; -fx-background-radius: 8;
+                """.formatted(bg, bd));
+
+                Label lb = new Label(m.tipo.getCodigo() + " " + m.cargaPct + "%");
+                lb.setStyle("-fx-font-size: 11px; -fx-text-fill: #263238; -fx-font-weight: bold;");
+                StackPane barWrap = new StackPane(bar, lb);
+                StackPane.setAlignment(lb, Pos.CENTER);
+
+                HBox h = new HBox(spacer, barWrap);
+                h.setAlignment(Pos.CENTER_LEFT);
+                cell.getChildren().add(h);
+
+                Tooltip.install(barWrap, new Tooltip(
+                        "%carga " + m.cargaPct + " | " + m.tipo.getCodigo() + "\n" + s + " – " + e));
+                barWrap.setCursor(javafx.scene.Cursor.HAND);
+
+                // click → editar ese micro
+                barWrap.setOnMouseClicked(ev -> {
+                    if (ev.getButton() == MouseButton.PRIMARY) abrirDialogoMicro(ws); // usa semana de ese tramo
+                    else if (ev.getButton() == MouseButton.SECONDARY) {
+                        ContextMenu cm = new ContextMenu();
+                        MenuItem ed = new MenuItem("Editar microciclo");
+                        ed.setOnAction(a -> abrirDialogoMicro(ws));
+                        MenuItem del = new MenuItem("Eliminar microciclo");
+                        del.setOnAction(a -> { pg.microDiasManuales.remove(m); recalcularPctCargaSemanalDesdeMicros(); pintarMicrosDias(); });
+                        cm.getItems().addAll(ed, del);
+                        cm.show(barWrap, ev.getScreenX(), ev.getScreenY());
+                    }
+                });
+            }
+        }
+    }
+
+    private LocalDate sundayOfCol(int col) { return mondayOfCol(col).plusDays(6); }
+
+    // Fin de un micro (inclusive)
+    private static LocalDate end(PlanGrafico.Micro m) { return m.start.plusDays(m.lenDays - 1); }
+
+    // Solape por fechas
+    private static boolean overlaps(LocalDate a1, LocalDate a2, LocalDate b1, LocalDate b2) {
+        return !a1.isAfter(b2) && !b1.isAfter(a2);
+    }
+
+    // Busca micro que contenga una fecha
+    private PlanGrafico.Micro buscarMicroEnFecha(LocalDate d) {
+        for (PlanGrafico.Micro m : plan.get().microDiasManuales) {
+            if (!d.isBefore(m.start) && !d.isAfter(end(m))) return m;
+        }
+        return null;
+    }
+
+    // Recalcula % de carga por semana (promedio ponderado por días)
+    private void recalcularPctCargaSemanalDesdeMicros() {
+        var pg = plan.get();
+        pg.microCargaPct.clear();
+
+        for (int w = 1; w <= pg.semanas; w++) {
+            LocalDate ws = mondayOfCol(w), we = sundayOfCol(w);
+            int sum = 0, days = 0;
+
+            for (PlanGrafico.Micro m : pg.microDiasManuales) {
+                LocalDate ms = m.start, me = end(m);
+                LocalDate s = ms.isAfter(ws) ? ms : ws;
+                LocalDate e = me.isBefore(we) ? me : we;
+                if (!s.isAfter(e)) {
+                    int d = (int) ChronoUnit.DAYS.between(s, e) + 1;
+                    sum += d * m.cargaPct;
+                    days += d;
+                }
+            }
+            if (days > 0) {
+                pg.microCargaPct.put(w, (int) Math.round(sum / (double) days));
+            }
+        }
+        // si usas minutos/tooltip, refresca fila MIN:
+        pintarMinutosFila();
+
+        pintarPorcentajeMicroEnFila(Row.PCT_MICRO);   // refresca cuando cambian micros
+
+    }
+
+
     private void toggleRailPretty() {
         boolean toRail = !rail.get();
         rail.set(toRail);
@@ -289,7 +648,7 @@ public class PlanGrafico2 extends Application {
 
         // Anima el ancho del wrapper (queda súper limpio)
         Timeline t = new Timeline(
-                new KeyFrame(javafx.util.Duration.millis(240),
+                new KeyFrame(Duration.millis(240),
                         new KeyValue(sidebarWrap.prefWidthProperty(), target, Interpolator.EASE_BOTH),
                         new KeyValue(sidebarWrap.maxWidthProperty(),  target, Interpolator.EASE_BOTH)
                 )
@@ -609,7 +968,7 @@ public class PlanGrafico2 extends Application {
         box.setPrefWidth(360);
         return new ScrollPane(box) {{
             setFitToWidth(true);
-            setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+            setHbarPolicy(ScrollBarPolicy.NEVER);
         }};
     }
 
@@ -799,11 +1158,27 @@ public class PlanGrafico2 extends Application {
                 cell.setMinSize(COL_SEMANA_ANCHO, 28);
                 cell.setMaxSize(Double.MAX_VALUE, Double.MAX_VALUE);
                 String base = (row.ordinal() % 2 == 0) ? "#ffffff" : "#fafafa";
-                cell.setStyle("-fx-background-color: " + base + "; -fx-border-color: #e6e6e6; -fx-border-width: 0 1 1 0;");
+                String baseStyle = "-fx-background-color: " + base + "; -fx-border-color: #e6e6e6; -fx-border-width: 0 1 1 0;";
+                cell.setStyle(baseStyle);
+                cell.getProperties().put("baseStyle", baseStyle);
+
                 GridPane.setRowIndex(cell, row.ordinal());
                 GridPane.setColumnIndex(cell, col);
                 grid.getChildren().add(cell);
             }
+        }
+
+        // Click/hover en fila MICRO (para crear/editar)
+        for (int col = 1; col <= plan.get().semanas; col++) {
+            StackPane cell = getCell(Row.MICRO, col);
+            cell.setCursor(javafx.scene.Cursor.HAND);
+            Tooltip.install(cell, new Tooltip("Agregar/editar microciclo (por días)"));
+            final int c = col;
+            cell.setOnMouseClicked(ev -> {
+                if (ev.getButton() == MouseButton.PRIMARY) {
+                    abrirDialogoMicro(mondayOfCol(c));
+                }
+            });
         }
 
         // Columna títulos
@@ -815,6 +1190,8 @@ public class PlanGrafico2 extends Application {
         addTitulo(grid, r++, "ETAPA");
         addTitulo(grid, r++, "MESOCICLO");
         addTitulo(grid, r++, "MICRO");
+        addTitulo(grid, r++, "% MICRO");   // o "% carga"
+
         addTitulo(grid, r++, "VOL / INT");
         addTitulo(grid, r++, "CONTROLES");
         addTitulo(grid, r++, "COMP");
@@ -1011,7 +1388,7 @@ public class PlanGrafico2 extends Application {
 
 
         // MESOCICLO (4–6 semanas aprox.) a partir de etapas: usamos lo almacenado
-        for (int[] mc : mesociclos) {
+       /* for (int[] mc : mesociclos) {
             int startCol = mc[0];
             int endCol = mc[1];
             int len = endCol - startCol + 1;
@@ -1024,14 +1401,58 @@ public class PlanGrafico2 extends Application {
              //   span(Row.MESOCICLO, idx, take, label("Meso"), Color.web("#E1BEE7"));
                 idx += take;
             }
-        }
+        }*/
 
        /* // MICRO: etiqueta por semana, sin solapar (una celda = un micro)
         for (int col = 1; col <= pg.semanas; col++) {
             addChip(Row.MICRO, col, "μ", Color.web("#f0f0f0"), "#9E9E9E");
         }*/
-        pintarMicroFila();
+        /*pintarMicroFila();*/
+        pintarMicrosDias();
+        recalcularPctCargaSemanalDesdeMicros();
 
+        pintarPorcentajeMicroEnFila(Row.PCT_MICRO);   // <- pinta los % en la nueva fila
+        pintarMesociclosManuales();
+
+     /*   for (int col = 1; col <= pg.semanas; col++) {
+            StackPane cell = getCell(Row.MESOCICLO, col);
+            cell.setCursor(javafx.scene.Cursor.HAND);
+            Tooltip.install(cell, new Tooltip("Agregar/editar mesociclo"));
+            final int c = col;
+            cell.setOnMouseClicked(ev -> {
+                if (ev.getButton() == MouseButton.PRIMARY) {
+                    abrirDialogoMesociclo(c);
+                } else if (ev.getButton() == MouseButton.SECONDARY) {
+                    abrirMenuMesocicloContextual(c, cell, ev.getScreenX(), ev.getScreenY());
+                }
+            });
+        }
+*/
+        for (int col = 1; col <= pg.semanas; col++) {
+            StackPane cell = getCell(Row.MESOCICLO, col);
+
+            // si encima hay un span de mesociclo, dejamos pasar los eventos al cell
+            // (haz esto solo si tu método span no lo hace ya; ver punto 3)
+            cell.setMouseTransparent(false);
+
+            cell.setCursor(javafx.scene.Cursor.HAND);
+            Tooltip.install(cell, new Tooltip("Agregar/editar mesociclo"));
+            final int c = col;
+
+            // HOVER: resalta solo la celda del meso
+            cell.setOnMouseEntered(e -> showPrettyMesoHover(cell));
+            cell.setOnMouseExited (e -> { if (hoverMesoCell == cell) clearPrettyMesoHover(); });
+
+
+            // CLICK: abre diálogo o menú contextual
+            cell.setOnMouseClicked(ev -> {
+                if (ev.getButton() == MouseButton.PRIMARY) {
+                    abrirDialogoMesociclo(c);
+                } else if (ev.getButton() == MouseButton.SECONDARY) {
+                    abrirMenuMesocicloContextual(c, cell, ev.getScreenX(), ev.getScreenY());
+                }
+            });
+        }
 
         // VOL / INT en la MISMA FILA con barras diferenciadas
         pintarVolumenIntensidad(pg);
@@ -1134,7 +1555,405 @@ public class PlanGrafico2 extends Application {
             else split.getItems().set(1, sc);
             contenido = sc;
         }
+
+       /* grid.addEventHandler(MouseEvent.MOUSE_MOVED, e -> {
+            int col = pickCol(new Point2D(e.getSceneX(), e.getSceneY()));
+            if (col != hoverCol) {
+                clearHighlight(hoverCol);
+                hoverCol = col;
+                applyHighlight(hoverCol);
+            }
+        });
+        grid.addEventHandler(MouseEvent.MOUSE_EXITED, e -> {
+            clearHighlight(hoverCol);
+            hoverCol = -1;
+        });*/
+
     }
+
+    // campo de la clase
+    private StackPane hoverMesoCell;
+
+    // helper
+    private void clearMesoHover() {
+        if (hoverMesoCell != null) {
+            String base = (String) hoverMesoCell.getProperties().get("baseStyle");
+            hoverMesoCell.setStyle(base);
+            hoverMesoCell = null;
+        }
+    }
+    private void showPrettyMesoHover(StackPane cell){
+        clearPrettyMesoHover();
+
+        // Cápsula
+        Rectangle capsule = new Rectangle();
+        capsule.arcWidthProperty().set(14);
+        capsule.arcHeightProperty().set(14);
+        capsule.setFill(Color.web("#42A5F533"));     // azul muy suave (alpha 0x33)
+        capsule.setStroke(Color.web("#42A5F5"));
+        capsule.setStrokeWidth(1.8);
+        capsule.setEffect(new DropShadow(12, Color.web("#42A5F522")));
+
+        // Se ajusta al tamaño real de la celda
+        capsule.widthProperty().bind(cell.widthProperty().subtract(6));
+        capsule.heightProperty().bind(cell.heightProperty().subtract(6));
+
+        // Marquita superior
+        Rectangle topBar = new Rectangle(20, 3, Color.web("#42A5F5"));
+        topBar.setArcWidth(3); topBar.setArcHeight(3);
+        StackPane.setAlignment(topBar, Pos.TOP_CENTER);
+        StackPane.setMargin(topBar, new Insets(2,0,0,0));
+
+        // Overlay (no debe capturar eventos)
+        StackPane overlay = new StackPane(capsule, topBar);
+        overlay.setMouseTransparent(true);
+        overlay.setOpacity(0);
+
+        cell.getChildren().add(overlay);
+        hoverMesoCell = cell;
+
+        FadeTransition ft = new FadeTransition(Duration.millis(140), overlay);
+        ft.setToValue(1);
+        ft.play();
+    }
+
+    private void clearPrettyMesoHover(){
+        if (hoverMesoCell == null) return;
+        // quita cualquier overlay que hayamos agregado a esa celda
+        hoverMesoCell.getChildren().removeIf(n ->
+                n instanceof StackPane sp &&
+                        sp.getChildren().stream().anyMatch(c -> c instanceof Rectangle));
+        hoverMesoCell = null;
+    }
+
+
+/*
+
+    private int hoverCol = -1;
+    private void applyHighlight(int col) {
+        if (col < 1 || col > plan.get().semanas) return;
+        for (Row r : Row.values()) {
+            StackPane baseCell = getBaseCell(r, col);
+            if (baseCell == null) continue;
+            String bs = (String) baseCell.getProperties().get("baseStyle");
+            // leve tinte azul
+            baseCell.setStyle(bs + "; -fx-background-color: linear-gradient(to bottom, rgba(100,181,246,0.25), rgba(100,181,246,0.12));");
+        }
+    }
+    private void clearHighlight(int col) {
+        if (col < 1 || col > plan.get().semanas) return;
+        for (Row r : Row.values()) {
+            StackPane baseCell = getBaseCell(r, col);
+            if (baseCell == null) continue;
+            String bs = (String) baseCell.getProperties().get("baseStyle");
+            if (bs != null) baseCell.setStyle(bs);
+        }
+    }
+    private StackPane getBaseCell(Row row, int col) {
+        for (Node n : grid.getChildren()) {
+            Integer r = GridPane.getRowIndex(n);
+            Integer c = GridPane.getColumnIndex(n);
+            Integer cs = GridPane.getColumnSpan(n);
+            if (r!=null && c!=null && r==row.ordinal() && c==col && n instanceof StackPane && (cs==null || cs==1)) {
+                return (StackPane) n; // celda de fondo (no un span)
+            }
+        }
+        return null;
+    }*/
+
+
+    private void abrirMenuMesocicloContextual(int col, Node owner, double sx, double sy) {
+        var pg = plan.get();
+        Mesociclo m = buscarMesocicloEnCol(col);
+
+        ContextMenu cm = new ContextMenu();
+
+        MenuItem nuevo = new MenuItem("Nuevo mesociclo aquí…");
+        nuevo.setOnAction(e -> abrirDialogoMesociclo(col));
+        cm.getItems().add(nuevo);
+
+        if (m != null) {
+            MenuItem editar = new MenuItem("Editar mesociclo");
+            editar.setOnAction(e -> abrirDialogoMesociclo(m.startCol));
+
+            MenuItem eliminar = new MenuItem("Eliminar mesociclo");
+            eliminar.setOnAction(e -> {
+                pg.mesociclosManuales.remove(m);
+                pintarMesociclosManuales();
+            });
+
+            cm.getItems().addAll(editar, eliminar);
+        }
+
+        cm.show(owner, sx, sy);
+    }
+    private void abrirDialogoMesociclo(int colInicio) {
+        var pg = plan.get();
+        Mesociclo existente = buscarMesocicloEnCol(colInicio);
+
+        // Si se edita, el "inicio" real del diálogo debe ser el del mesociclo encontrado
+        int inicioDialog = (existente != null) ? existente.startCol : colInicio;
+
+        Dialog<ButtonType> dlg = new Dialog<>();
+        dlg.setTitle(existente == null ? "Nuevo mesociclo" : "Editar mesociclo");
+        dlg.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+
+        GridPane gp = new GridPane();
+        gp.setHgap(10); gp.setVgap(8); gp.setPadding(new Insets(10));
+
+        int maxDur = Math.max(1, pg.semanas - inicioDialog + 1);
+        Spinner<Integer> spDur = spinner(1, maxDur, existente == null ? 4 : existente.len, 1);
+
+        ComboBox<MesocicloTipo> cbTipo = new ComboBox<>();
+        cbTipo.getItems().setAll(MesocicloTipo.values());
+        cbTipo.setValue(existente == null ? MesocicloTipo.ENTRANTE : existente.tipo);
+
+        gp.add(new Label("Columna inicio:"), 0, 0); gp.add(new Label(String.valueOf(inicioDialog)), 1, 0);
+        gp.add(new Label("Duración (semanas):"), 0, 1); gp.add(spDur, 1, 1);
+        gp.add(new Label("Tipo:"), 0, 2); gp.add(cbTipo, 1, 2);
+
+        dlg.getDialogPane().setContent(gp);
+
+        var res = dlg.showAndWait();
+        if (res.isEmpty() || res.get() != ButtonType.OK) return;
+
+        int nuevoLen  = spDur.getValue();
+        MesocicloTipo nuevoTipo = cbTipo.getValue();
+        int nuevoIni  = inicioDialog;
+
+        Mesociclo nuevo = new Mesociclo(nuevoIni, nuevoLen, nuevoTipo);
+
+        // Inserta con confirmación si invade al siguiente
+        insertarMesocicloConConfirmacion(nuevo, existente);
+    }
+
+/*    private void abrirDialogoMesociclo(int colInicio) {
+        var pg = plan.get();
+
+        // ¿Hay uno existente que abarque esta columna? -> precargar para editar
+        Mesociclo existente = buscarMesocicloEnCol(colInicio);
+
+        Dialog<ButtonType> dlg = new Dialog<>();
+        dlg.setTitle(existente == null ? "Nuevo mesociclo" : "Editar mesociclo");
+        dlg.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+
+        GridPane gp = new GridPane();
+        gp.setHgap(10); gp.setVgap(8); gp.setPadding(new Insets(10));
+
+        int maxDur = Math.max(1, pg.semanas - colInicio + 1);
+        Spinner<Integer> spDur = spinner(1, maxDur, existente == null ? 4 : existente.len, 1);
+
+        ComboBox<MesocicloTipo> cbTipo = new ComboBox<>();
+        cbTipo.getItems().setAll(MesocicloTipo.values());
+        cbTipo.setValue(existente == null ? MesocicloTipo.ENTRANTE : existente.tipo);
+
+        gp.add(new Label("Columna inicio:"), 0, 0); gp.add(new Label(String.valueOf(colInicio)), 1, 0);
+        gp.add(new Label("Duración (semanas):"), 0, 1); gp.add(spDur, 1, 1);
+        gp.add(new Label("Tipo:"), 0, 2); gp.add(cbTipo, 1, 2);
+
+        dlg.getDialogPane().setContent(gp);
+
+        var res = dlg.showAndWait();
+        if (res.isEmpty() || res.get() != ButtonType.OK) return;
+
+        Mesociclo nuevo = new Mesociclo(colInicio, spDur.getValue(), cbTipo.getValue());
+
+        // Elimina solapamientos con el nuevo/actualizado
+        int start = nuevo.startCol, end = nuevo.startCol + nuevo.len - 1;
+        pg.mesociclosManuales.removeIf(m -> overlaps(m.startCol, m.startCol + m.len - 1, start, end));
+
+        // Si estaba editando, reemplaza, si no, añade
+        pg.mesociclosManuales.add(nuevo);
+
+        pintarMesociclosManuales();
+    }*/
+
+
+    private Mesociclo buscarMesocicloEnCol(int col) {
+        for (Mesociclo m : plan.get().mesociclosManuales) {
+            int s = m.startCol, e = m.startCol + m.len - 1;
+            if (col >= s && col <= e) return m;
+        }
+        return null;
+    }
+
+    private boolean overlaps(int a1, int a2, int b1, int b2) {
+        return a1 <= b2 && b1 <= a2;
+    }
+    private void pintarMesociclosManuales() {
+        var pg = plan.get();
+
+        // 1) Elimina SOLO los spans de mesociclo previamente pintados
+        grid.getChildren().removeIf(n ->
+                Objects.equals(GridPane.getRowIndex(n), Row.MESOCICLO.ordinal()) &&
+                        (n.getUserData() instanceof CellTag ct) &&
+                        ct.type == ZoneType.MESOCICLO
+        );
+
+        // 2) Repinta los mesociclos del modelo
+        for (Mesociclo m : pg.mesociclosManuales) {
+            if (m.len <= 0) continue;
+            int start = Math.max(1, m.startCol);
+            int end   = Math.min(pg.semanas, m.startCol + m.len - 1);
+            if (end < start) continue;
+            int len = end - start + 1;
+
+            Color bg = MESO_BG.getOrDefault(m.tipo, Color.web("#E1BEE7"));
+            String texto = m.tipo.etiqueta();
+            spanMeso(Row.MESOCICLO, start, len, label(texto), bg, start, end);
+        }
+    }
+    private static int end(Mesociclo m) { return m.startCol + m.len - 1; }
+    private static Mesociclo clip(int s, int e, MesocicloTipo t) {
+        return new Mesociclo(s, e - s + 1, t);
+    }
+    private void insertarMesocicloConConfirmacion(Mesociclo nuevo, Mesociclo aReemplazar) {
+        // Lista de existentes (si estoy editando, sácalo para recalcular limpio)
+        var lista = new ArrayList<>(plan.get().mesociclosManuales);
+        if (aReemplazar != null) lista.remove(aReemplazar);
+        lista.sort(Comparator.comparingInt(m -> m.startCol));
+
+        // Limita el nuevo a [1..semanas]
+        int ns = Math.max(1, nuevo.startCol);
+        int ne = Math.min(plan.get().semanas, nuevo.startCol + nuevo.len - 1);
+        nuevo.startCol = ns;
+        nuevo.len = Math.max(1, ne - ns + 1);
+
+        // Meso inmediatamente a la derecha (el “que sigue”)
+        Mesociclo next = lista.stream()
+                .filter(m -> m.startCol >= ns)
+                .findFirst()
+                .orElse(null);
+
+        // ¿El nuevo invade/solapa al siguiente? (ej. nuevo 14–16 y next 16–20)
+        if (next != null && ne >= next.startCol) {
+            ButtonType BTN_ACORTAR_NUEVO  = new ButtonType("Acortar nuevo", ButtonBar.ButtonData.YES);
+            ButtonType BTN_RECORTAR_EXIST = new ButtonType("Recortar existente", ButtonBar.ButtonData.NO);
+            ButtonType BTN_CANCELAR       = ButtonType.CANCEL;
+
+            Alert a = new Alert(Alert.AlertType.CONFIRMATION,
+                    "El nuevo ("+ns+"–"+ne+") invade al siguiente ("+next.startCol+"–"+end(next)+").\n\n" +
+                            "¿Qué deseas hacer?",
+                    BTN_ACORTAR_NUEVO, BTN_RECORTAR_EXIST, BTN_CANCELAR);
+            a.setHeaderText("Resolver solape con el mesociclo siguiente");
+            Optional<ButtonType> r = a.showAndWait();
+            if (r.isEmpty() || r.get()==BTN_CANCELAR) return;
+
+            if (r.get()==BTN_ACORTAR_NUEVO) {
+                // Opción 1: adaptar el nuevo para que termine justo antes del siguiente
+                int nuevoFin = next.startCol - 1;
+                int nuevaLen = nuevoFin - ns + 1;
+                if (nuevaLen <= 0) {
+                    alert("No hay espacio: el siguiente comienza en la misma semana.\nCambia el inicio o edita/elimina el meso siguiente.");
+                    return;
+                }
+                nuevo.len = nuevaLen;
+
+            } else if (r.get()==BTN_RECORTAR_EXIST) {
+                // Opción 2: recortar el existente por la izquierda
+                int newStartNext = ne + 1;
+                int newLenNext   = end(next) - newStartNext + 1;
+                if (newLenNext <= 0) {
+                    // Si queda cubierto por completo, elimínalo
+                    plan.get().mesociclosManuales.remove(next);
+                } else {
+                    next.startCol = newStartNext;
+                    next.len = newLenNext;
+                }
+            }
+        }
+
+        // Inserta/ajusta el resto sin destruir (recorta lo que haga falta a izquierda/derecha)
+        insertarMesocicloNoDestructivo(nuevo, aReemplazar);
+    }
+
+    private void insertarMesocicloNoDestructivo(Mesociclo nuevo, Mesociclo aReemplazar) {
+        var lista = new ArrayList<>(plan.get().mesociclosManuales);
+        if (aReemplazar != null) lista.remove(aReemplazar);
+
+        // Limita a rango válido
+        int ns = Math.max(1, nuevo.startCol);
+        int ne = Math.min(plan.get().semanas, nuevo.startCol + nuevo.len - 1);
+        nuevo.startCol = ns;
+        nuevo.len = Math.max(1, ne - ns + 1);
+
+        List<Mesociclo> res = new ArrayList<>();
+        boolean colocado = false;
+
+        for (Mesociclo m : lista) {
+            int ms = m.startCol, me = end(m);
+
+            if (me < ns) {                     // viejo totalmente antes
+                res.add(m);
+                continue;
+            }
+            if (ms > ne) {                     // viejo totalmente después
+                if (!colocado) { res.add(nuevo); colocado = true; }
+                res.add(m);
+                continue;
+            }
+            // HAY SOLAPE ⇒ recortar el viejo
+            if (ms < ns) {                     // porción izquierda del viejo
+                res.add(clip(ms, ns - 1, m.tipo));
+            }
+            if (!colocado) {                   // coloca el nuevo una sola vez
+                res.add(nuevo);
+                colocado = true;
+            }
+            if (me > ne) {                     // porción derecha del viejo
+                res.add(clip(ne + 1, me, m.tipo));
+            }
+            // si el viejo queda cubierto, no se agrega
+        }
+        if (!colocado) res.add(nuevo);
+
+        // Ordena y fusiona contiguos del mismo tipo
+        res.sort(Comparator.comparingInt(a -> a.startCol));
+        for (int i = 0; i < res.size() - 1; ) {
+            Mesociclo a = res.get(i), b = res.get(i + 1);
+            if (a.tipo == b.tipo && end(a) + 1 == b.startCol) {
+                a.len += b.len;
+                res.remove(i + 1);
+            } else i++;
+        }
+
+        plan.get().mesociclosManuales = res;
+        pintarMesociclosManuales();
+    }
+
+
+    private void spanMeso(Row row, int startCol, int spanCols, Node content, Color bg, int start, int end) {
+        StackPane box = new StackPane(content);
+        box.setAlignment(Pos.CENTER);
+        box.setPadding(new Insets(4,6,4,6));
+        String base = toHex(bg);
+        box.setStyle("-fx-background-color: " + base + "; -fx-border-color: derive(" + base + ", -20%); -fx-border-radius: 8; -fx-background-radius: 8;");
+        box.setOnMouseEntered(e -> box.setStyle(
+                box.getStyle() + "; -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.20), 14, 0.2, 0, 2); -fx-translate-y: -1;"));
+        box.setOnMouseExited(e -> box.setStyle(
+                box.getStyle().replaceAll("; -fx-effect:[^;]*", "").replaceAll("; -fx-translate-y:[^;]*", "")));
+
+        GridPane.setRowIndex(box, row.ordinal());
+        GridPane.setColumnIndex(box, startCol);
+        GridPane.setColumnSpan(box, spanCols);
+
+        box.setUserData(new CellTag(ZoneType.MESOCICLO, start, end));
+
+        // 👇 clave: deja pasar eventos a la celda de fondo
+      /*  box.setMouseTransparent(true);
+
+        grid.getChildren().add(box);*/
+        box.setCursor(javafx.scene.Cursor.HAND);
+        Tooltip.install(box, new Tooltip("Editar mesociclo (" + start + "–" + end + ")"));
+        box.setOnMouseClicked(ev -> {
+            if (ev.getButton() == MouseButton.PRIMARY) abrirDialogoMesociclo(start);
+            else if (ev.getButton() == MouseButton.SECONDARY) abrirMenuMesocicloContextual(start, box, ev.getScreenX(), ev.getScreenY());
+        });
+
+        grid.getChildren().add(box);
+        box.toFront();
+    }
+
 
     // Formatos
     private static final DateTimeFormatter DF_D    = DateTimeFormatter.ofPattern("dd");
@@ -1236,7 +2055,7 @@ public class PlanGrafico2 extends Application {
 
     private void animateDivider(DoubleProperty prop, double target) {
         Timeline t = new Timeline(
-                new KeyFrame(javafx.util.Duration.millis(220),
+                new KeyFrame(Duration.millis(220),
                         new KeyValue(prop, target, Interpolator.EASE_BOTH))
         );
         t.play();
@@ -1468,7 +2287,7 @@ public class PlanGrafico2 extends Application {
     }
 
 
-    private void pintarMicroFila() {
+/*    private void pintarMicroFila() {
         var pg = plan.get();
         for (int col = 1; col <= pg.semanas; col++) {
             clearCell(Row.MICRO, col);
@@ -1483,7 +2302,71 @@ public class PlanGrafico2 extends Application {
                 Tooltip.install(cell, new Tooltip(t.getCodigo() + " (sem " + col + ")"));
             }
         }
+    }*/
+private void pintarMicroFila() {
+    var pg = plan.get();
+
+    for (int col = 1; col <= pg.semanas; col++) {
+        // limpia overlays de esa celda (pero NO el StackPane base)
+        clearCell(Row.MICRO, col);
+
+        StackPane cell = getCell(Row.MICRO, col);
+        cell.setPadding(Insets.EMPTY);
+        cell.setCursor(javafx.scene.Cursor.HAND);
+
+        MicrocicloTipo t = pg.microAsignaciones.get(col);
+        Integer pct = plan.get().microCargaPct.get(col); // puede ser null
+
+        // === Fondo que ocupa TODA la celda ===
+        Region bg = new Region();
+        // deja un margen visual de 2px alrededor
+        bg.prefWidthProperty().bind(cell.widthProperty().subtract(4));
+        bg.prefHeightProperty().bind(cell.heightProperty().subtract(4));
+        bg.setMaxSize(Region.USE_PREF_SIZE, Region.USE_PREF_SIZE);
+
+        String bgHex = (t == null) ? "#f0f0f0" : MICRO_BG.getOrDefault(t, "#f0f0f0");
+        String bdHex = (t == null) ? "#9E9E9E" : MICRO_BORDER.getOrDefault(t, "#9E9E9E");
+
+        bg.setStyle(
+                "-fx-background-color:" + bgHex + ";" +
+                        "-fx-background-radius:8;" +
+                        "-fx-border-color:" + bdHex + ";" +
+                        "-fx-border-radius:8;"
+        );
+
+        // === Badge con la letra/código del micro ===
+        String code = (t == null) ? "μ" : t.getCodigo();   // usas el mismo getCodigo() que ya tienes
+        Label badge = new Label(code);
+        badge.setStyle("""
+            -fx-font-size: 11px;
+            -fx-font-weight: bold;
+            -fx-background-color: white;
+            -fx-text-fill: #263238;
+            -fx-padding: 2 6 2 6;
+            -fx-background-radius: 999;
+            -fx-border-radius: 999;
+            -fx-border-color: rgba(0,0,0,0.18);
+        """);
+        StackPane.setAlignment(badge, Pos.TOP_CENTER);
+        StackPane.setMargin(badge, new Insets(3,0,0,0));
+
+        // tooltip: tipo + % (sin pintarlo en la celda)
+        String tip = (t == null ? "Sin asignar" : t.getCodigo()) + (pct != null ? " · Carga " + pct + "%" : "");
+        Tooltip.install(cell, new Tooltip(tip));
+
+        // clic para editar micro (si ya tienes tu diálogo de micro, llámalo aquí)
+        final int c = col;
+        cell.setOnMouseClicked(ev -> {
+            if (ev.getButton() == MouseButton.PRIMARY) {
+                abrirDialogoMicro(mondayOfCol(c));
+            }
+        });
+
+        // monta todo
+        cell.getChildren().addAll(bg, badge);
     }
+}
+
 
     private void clearCell(Row row, int col) {
         // elimina contenidos “flotantes” (chips/labels) pero preserva el StackPane de fondo
