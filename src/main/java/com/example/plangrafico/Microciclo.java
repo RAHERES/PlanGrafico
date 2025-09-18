@@ -3,6 +3,7 @@ package com.example.plangrafico;
 import java.time.LocalDate;
 import java.util.*;
 import com.example.plangrafico.PlanGrafico.*;
+import com.example.plangrafico.unidadentrenamiento.Sesion;
 
 
 public final class Microciclo {

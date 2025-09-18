@@ -630,7 +630,6 @@ public class PlanGrafico2 extends Application {
         pintarMinutosFila();
 
         pintarPorcentajeMicroEnFila(Row.PCT_MICRO);   // refresca cuando cambian micros
-
     }
 
 
@@ -1088,6 +1087,7 @@ public class PlanGrafico2 extends Application {
             }
 
             pg.volIni = spVolIni.getValue();
+
             pg.volFin = spVolFin.getValue();
             pg.intIni = spIntIni.getValue();
             pg.intFin = spIntFin.getValue();

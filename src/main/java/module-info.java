@@ -21,4 +21,6 @@ module com.example.plangrafico {
 
     opens com.example.plangrafico to javafx.fxml;
     exports com.example.plangrafico;
+    exports com.example.plangrafico.unidadentrenamiento;
+    opens com.example.plangrafico.unidadentrenamiento to javafx.fxml;
 }
